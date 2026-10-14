@@ -2,7 +2,9 @@
   "name": "@nexashare/api",
   "version": "1.0.0",
   "type": "module",
+  "main": "src/app.ts",
   "scripts": {
+
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "tsx src/server.ts"
