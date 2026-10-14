@@ -100,66 +100,96 @@ class MemoryStateStore implements IStateStore {
 class UpstashStateStore implements IStateStore {
   private url: string;
   private token: string;
+  private fallback = new MemoryStateStore();
 
   constructor(url: string, token: string) {
     this.url = url.replace(/\/$/, '');
     this.token = token;
   }
 
-  private async request<T = any>(command: string, ...args: (string | number)[]): Promise<T> {
-    const res = await fetch(`${this.url}/${command}/${args.map(encodeURIComponent).join('/')}`, {
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    });
-    const data = await res.json();
-    return data.result;
+  private async request<T = any>(command: string, ...args: (string | number)[]): Promise<T | null> {
+    try {
+      const res = await fetch(this.url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([command.toUpperCase(), ...args]),
+      });
+      if (!res.ok) {
+        console.warn(`Upstash REST API returned status ${res.status}`);
+        return null;
+      }
+      const data = await res.json();
+      if (data && data.error) {
+        console.warn(`Upstash error: ${data.error}`);
+        return null;
+      }
+      return data?.result as T;
+    } catch (err) {
+      console.warn('Upstash fetch failed, using fallback memory store:', err);
+      return null;
+    }
   }
 
   async get(key: string): Promise<string | null> {
-    return this.request('get', key);
+    const res = await this.request<string>('get', key);
+    if (res !== null && res !== undefined) return res;
+    return this.fallback.get(key);
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    await this.request('set', key, value, 'ex', ttlSeconds);
+    const res = await this.request('set', key, value, 'ex', ttlSeconds);
+    // Always mirror to fallback memory so local instance stays synced
+    await this.fallback.set(key, value, ttlSeconds);
   }
 
   async del(key: string): Promise<void> {
     await this.request('del', key);
+    await this.fallback.del(key);
   }
 
   async incr(key: string): Promise<number> {
-    return this.request('incr', key);
+    const res = await this.request<number>('incr', key);
+    if (typeof res === 'number') return res;
+    return this.fallback.incr(key);
   }
 
   async expire(key: string, seconds: number): Promise<void> {
     await this.request('expire', key, seconds);
+    await this.fallback.expire(key, seconds);
   }
 
   async exists(key: string): Promise<boolean> {
     const count = await this.request<number>('exists', key);
-    return count > 0;
+    if (typeof count === 'number') return count > 0;
+    return this.fallback.exists(key);
   }
 
   async pushSignal(roomId: string, recipientRole: string, signal: SignalMessage): Promise<void> {
     const key = `signals:${roomId}:${recipientRole}`;
     await this.request('rpush', key, JSON.stringify(signal));
     await this.request('expire', key, 60);
+    await this.fallback.pushSignal(roomId, recipientRole, signal);
   }
 
   async pollSignals(roomId: string, recipientRole: string, afterTimestamp: number): Promise<SignalMessage[]> {
     const key = `signals:${roomId}:${recipientRole}`;
-    const rawList = (await this.request<string[]>('lrange', key, 0, -1)) || [];
-    const signals: SignalMessage[] = [];
-    for (const item of rawList) {
-      try {
-        const parsed = typeof item === 'string' ? JSON.parse(item) : item;
-        if (parsed.timestamp > afterTimestamp) {
-          signals.push(parsed);
-        }
-      } catch {}
+    const rawList = await this.request<string[]>('lrange', key, 0, -1);
+    if (Array.isArray(rawList) && rawList.length > 0) {
+      const signals: SignalMessage[] = [];
+      for (const item of rawList) {
+        try {
+          const parsed = typeof item === 'string' ? JSON.parse(item) : item;
+          if (parsed && parsed.timestamp > afterTimestamp) {
+            signals.push(parsed);
+          }
+        } catch {}
+      }
+      return signals;
     }
-    return signals;
+    return this.fallback.pollSignals(roomId, recipientRole, afterTimestamp);
   }
 }
 
@@ -176,3 +206,4 @@ export function createStateStore(): IStateStore {
 }
 
 export const globalStateStore = createStateStore();
+

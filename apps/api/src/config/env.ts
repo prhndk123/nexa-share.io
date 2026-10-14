@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+const cleanString = z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), z.string().optional());
+const cleanUrl = z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), z.string().url().optional());
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ORIGIN: z.string().default('http://localhost:5173'),
@@ -7,33 +10,39 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
 
   // Upstash Serverless Redis (Native for Vercel)
-  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
-  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
-  KV_REST_API_URL: z.string().url().optional(),
-  KV_REST_API_TOKEN: z.string().optional(),
+  UPSTASH_REDIS_REST_URL: cleanUrl,
+  UPSTASH_REDIS_REST_TOKEN: cleanString,
+  KV_REST_API_URL: cleanUrl,
+  KV_REST_API_TOKEN: cleanString,
 
   // Standard Redis (Optional for local or traditional server)
-  REDIS_URL: z.string().optional(),
+  REDIS_URL: cleanString,
 
-  SESSION_SIGNING_SECRET: z.string().min(16).default('dev-session-signing-secret-must-be-at-least-16-chars'),
-  ROOM_CODE_HMAC_SECRET: z.string().min(16).default('dev-room-code-hmac-secret-must-be-at-least-16-chars'),
+  SESSION_SIGNING_SECRET: z.preprocess(
+    (val) => (typeof val === 'string' && val.length >= 16 ? val : undefined),
+    z.string().min(16).default('dev-session-signing-secret-must-be-at-least-16-chars')
+  ),
+  ROOM_CODE_HMAC_SECRET: z.preprocess(
+    (val) => (typeof val === 'string' && val.length >= 16 ? val : undefined),
+    z.string().min(16).default('dev-room-code-hmac-secret-must-be-at-least-16-chars')
+  ),
   ROOM_JOIN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   ROOM_PENDING_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   ROOM_CONNECTED_TTL_SECONDS: z.coerce.number().int().positive().default(7200),
 
   // STUN / TURN
-  TURN_URLS: z.string().optional(),
-  TURN_USERNAME: z.string().optional(),
-  TURN_CREDENTIAL: z.string().optional(),
-  TURN_HOST: z.string().optional(),
-  TURN_SHARED_SECRET: z.string().optional(),
+  TURN_URLS: cleanString,
+  TURN_USERNAME: cleanString,
+  TURN_CREDENTIAL: cleanString,
+  TURN_HOST: cleanString,
+  TURN_SHARED_SECRET: cleanString,
   TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().positive().default(600),
 
   // Optional Pusher
-  PUSHER_APP_ID: z.string().optional(),
-  PUSHER_KEY: z.string().optional(),
-  PUSHER_SECRET: z.string().optional(),
-  PUSHER_CLUSTER: z.string().optional(),
+  PUSHER_APP_ID: cleanString,
+  PUSHER_KEY: cleanString,
+  PUSHER_SECRET: cleanString,
+  PUSHER_CLUSTER: cleanString,
 
   RATE_JOIN_LIMIT: z.coerce.number().int().positive().default(5),
   RATE_JOIN_WINDOW_SECONDS: z.coerce.number().int().positive().default(300),
@@ -41,4 +50,5 @@ const EnvSchema = z.object({
 });
 
 export const env = EnvSchema.parse(process.env);
+
 
