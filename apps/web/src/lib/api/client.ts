@@ -54,6 +54,7 @@ export const api = {
     roomId: string;
     code: string;
     expiresAt: string;
+    serverTime: number;
     status: string;
     inviteUrl: string;
   }> {
@@ -82,6 +83,8 @@ export const api = {
     roomId: string;
     status: string;
     expiresInSeconds: number;
+    expiresAt: string;
+    serverTime: number;
   }> {
     return fetchJson('/rooms/join', { method: 'POST', body: JSON.stringify({ code, deviceLabel }) }, token);
   },

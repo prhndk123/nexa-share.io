@@ -1,6 +1,16 @@
 import { env } from '../../config/env';
 import type { SignalMessage } from '@nexashare/shared';
 
+export class StateStoreError extends Error {
+  readonly status = 503;
+  constructor(readonly code: 'STATE_STORE_NOT_CONFIGURED' | 'STATE_STORE_UNAVAILABLE', message: string) {
+    super(message);
+    this.name = 'StateStoreError';
+  }
+}
+
+const signalTtlSeconds = Math.max(60, env.ROOM_PENDING_TTL_SECONDS);
+
 export interface IStateStore {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
@@ -30,7 +40,7 @@ class MemoryStateStore implements IStateStore {
       }
     }
     for (const [k, list] of this.signals.entries()) {
-      const filtered = list.filter((s) => now - (s.timestamp || now) < 60_000);
+      const filtered = list.filter((s) => now - s.timestamp < signalTtlSeconds * 1000);
       if (filtered.length === 0) {
         this.signals.delete(k);
       } else {
@@ -83,6 +93,7 @@ class MemoryStateStore implements IStateStore {
   }
 
   async pushSignal(roomId: string, recipientRole: string, signal: SignalMessage): Promise<void> {
+    this.cleanup();
     const key = `signals:${roomId}:${recipientRole}`;
     const list = this.signals.get(key) || [];
     list.push(signal);
@@ -90,6 +101,7 @@ class MemoryStateStore implements IStateStore {
   }
 
   async pollSignals(roomId: string, recipientRole: string, afterTimestamp: number): Promise<SignalMessage[]> {
+    this.cleanup();
     const key = `signals:${roomId}:${recipientRole}`;
     const list = this.signals.get(key) || [];
     return list.filter((s) => s.timestamp > afterTimestamp);
@@ -100,14 +112,13 @@ class MemoryStateStore implements IStateStore {
 class UpstashStateStore implements IStateStore {
   private url: string;
   private token: string;
-  private fallback = new MemoryStateStore();
 
   constructor(url: string, token: string) {
     this.url = url.replace(/\/$/, '');
     this.token = token;
   }
 
-  private async request<T = any>(command: string, ...args: (string | number)[]): Promise<T | null> {
+  private async request<T>(command: string, ...args: (string | number)[]): Promise<T> {
     try {
       const res = await fetch(this.url, {
         method: 'POST',
@@ -116,62 +127,50 @@ class UpstashStateStore implements IStateStore {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify([command.toUpperCase(), ...args]),
+        signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) {
-        console.warn(`Upstash REST API returned status ${res.status}`);
-        return null;
+        throw new Error(`State store HTTP status ${res.status}`);
       }
       const data = await res.json();
-      if (data && data.error) {
-        console.warn(`Upstash error: ${data.error}`);
-        return null;
+      if (!data || data.error || !Object.hasOwn(data, 'result')) {
+        throw new Error('Invalid state store response');
       }
-      return data?.result as T;
-    } catch (err) {
-      console.warn('Upstash fetch failed, using fallback memory store:', err);
-      return null;
+      return data.result as T;
+    } catch {
+      // A Redis outage must never create isolated, apparently valid sessions.
+      throw new StateStoreError('STATE_STORE_UNAVAILABLE', 'Layanan sesi sementara tidak tersedia. Silakan coba lagi.');
     }
   }
 
   async get(key: string): Promise<string | null> {
-    const res = await this.request<string>('get', key);
-    if (res !== null && res !== undefined) return res;
-    return this.fallback.get(key);
+    return this.request<string | null>('get', key);
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    const res = await this.request('set', key, value, 'ex', ttlSeconds);
-    // Always mirror to fallback memory so local instance stays synced
-    await this.fallback.set(key, value, ttlSeconds);
+    await this.request('set', key, value, 'ex', ttlSeconds);
   }
 
   async del(key: string): Promise<void> {
     await this.request('del', key);
-    await this.fallback.del(key);
   }
 
   async incr(key: string): Promise<number> {
-    const res = await this.request<number>('incr', key);
-    if (typeof res === 'number') return res;
-    return this.fallback.incr(key);
+    return this.request<number>('incr', key);
   }
 
   async expire(key: string, seconds: number): Promise<void> {
     await this.request('expire', key, seconds);
-    await this.fallback.expire(key, seconds);
   }
 
   async exists(key: string): Promise<boolean> {
-    const count = await this.request<number>('exists', key);
-    if (typeof count === 'number') return count > 0;
-    return this.fallback.exists(key);
+    return (await this.request<number>('exists', key)) > 0;
   }
 
   async pushSignal(roomId: string, recipientRole: string, signal: SignalMessage): Promise<void> {
     const key = `signals:${roomId}:${recipientRole}`;
     await this.request('rpush', key, JSON.stringify(signal));
-    await this.request('expire', key, 60);
-    await this.fallback.pushSignal(roomId, recipientRole, signal);
+    await this.request('expire', key, signalTtlSeconds);
   }
 
   async pollSignals(roomId: string, recipientRole: string, afterTimestamp: number): Promise<SignalMessage[]> {
@@ -189,21 +188,31 @@ class UpstashStateStore implements IStateStore {
       }
       return signals;
     }
-    return this.fallback.pollSignals(roomId, recipientRole, afterTimestamp);
+    return [];
   }
 }
 
 // Factory function to return optimal store
 export function createStateStore(): IStateStore {
-  const upstashUrl = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
-  const upstashToken = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
+  const upstashPair = env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN;
+  const kvPair = env.KV_REST_API_URL && env.KV_REST_API_TOKEN;
+  const upstashUrl = upstashPair ? env.UPSTASH_REDIS_REST_URL : kvPair ? env.KV_REST_API_URL : undefined;
+  const upstashToken = upstashPair ? env.UPSTASH_REDIS_REST_TOKEN : kvPair ? env.KV_REST_API_TOKEN : undefined;
 
   if (upstashUrl && upstashToken) {
     return new UpstashStateStore(upstashUrl, upstashToken);
+  }
+
+  const isDeployedOnVercel = process.env.VERCEL === '1' && process.env.VERCEL_ENV !== 'development';
+  const hasPartialConfig = Boolean(env.UPSTASH_REDIS_REST_URL || env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_URL || env.KV_REST_API_TOKEN);
+  if (isDeployedOnVercel || hasPartialConfig) {
+    const unavailable = async (): Promise<never> => {
+      throw new StateStoreError('STATE_STORE_NOT_CONFIGURED', 'Server transfer belum siap. Silakan hubungi pengelola aplikasi.');
+    };
+    return { get: unavailable, set: unavailable, del: unavailable, incr: unavailable, expire: unavailable, exists: unavailable, pushSignal: unavailable, pollSignals: unavailable };
   }
 
   return new MemoryStateStore();
 }
 
 export const globalStateStore = createStateStore();
-

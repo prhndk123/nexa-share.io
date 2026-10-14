@@ -21,6 +21,7 @@ export interface PendingJoinRequest {
   guestSessionId: string;
   deviceLabel: string;
   createdAt: string;
+  expiresAt: string;
 }
 
 export class RoomService {
@@ -97,8 +98,7 @@ export class RoomService {
 
     await this.sessionService.updateSessionById(
       hostSessionId,
-      { roomId, role: 'HOST', canSignal: false },
-      ttl
+      { roomId, role: 'HOST', canSignal: false }
     );
 
     return {
@@ -113,7 +113,8 @@ export class RoomService {
   async getRoom(roomId: string): Promise<RoomRecord | null> {
     const raw = await this.store.get(`room:${roomId}`);
     if (!raw) return null;
-    return JSON.parse(raw) as RoomRecord;
+    const room = JSON.parse(raw) as RoomRecord;
+    return Date.parse(room.expiresAt) > Date.now() ? room : null;
   }
 
   async requestJoin(code: string, guestSessionId: string, deviceLabel: string) {
@@ -132,31 +133,36 @@ export class RoomService {
     }
 
     const requestId = crypto.randomUUID();
+    const expiresAt = new Date(Math.min(
+      Date.parse(room.expiresAt), Date.now() + env.ROOM_PENDING_TTL_SECONDS * 1000
+    )).toISOString();
+    const pendingTtl = Math.max(1, Math.ceil((Date.parse(expiresAt) - Date.now()) / 1000));
     const pending: PendingJoinRequest = {
       requestId,
       roomId,
       guestSessionId,
       deviceLabel,
       createdAt: new Date().toISOString(),
+      expiresAt,
     };
 
     await this.store.set(
       `room:${roomId}:pending`,
       JSON.stringify(pending),
-      env.ROOM_PENDING_TTL_SECONDS
+      pendingTtl
     );
 
     await this.sessionService.updateSessionById(
       guestSessionId,
-      { roomId, role: 'GUEST', canSignal: false },
-      env.ROOM_JOIN_TTL_SECONDS
+      { roomId, role: 'GUEST', canSignal: false }
     );
 
     return {
       roomId,
       requestId,
       hostSessionId: room.hostSessionId,
-      expiresInSeconds: env.ROOM_PENDING_TTL_SECONDS,
+      expiresInSeconds: pendingTtl,
+      expiresAt,
     };
   }
 
@@ -171,6 +177,8 @@ export class RoomService {
 
     const pending = JSON.parse(pendingRaw) as PendingJoinRequest;
     if (pending.requestId !== requestId) return null;
+    const pendingExpiry = pending.expiresAt ?? new Date(Date.parse(pending.createdAt) + env.ROOM_PENDING_TTL_SECONDS * 1000).toISOString();
+    if (Date.parse(pendingExpiry) <= Date.now()) return null;
 
     const connectedTtl = env.ROOM_CONNECTED_TTL_SECONDS;
     room.status = 'PAIRED';
@@ -247,4 +255,3 @@ export class RoomService {
     return room;
   }
 }
-

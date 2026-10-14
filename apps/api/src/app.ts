@@ -9,7 +9,7 @@ import {
   type SignalMessage,
 } from '@nexashare/shared';
 import { env } from './config/env';
-import { globalStateStore } from './modules/store/state-store';
+import { globalStateStore, StateStoreError } from './modules/store/state-store';
 import { SessionService, type EphemeralSession } from './modules/auth/session.service';
 import { RoomService } from './modules/rooms/room.service';
 import { TurnService } from './modules/turn/turn.service';
@@ -98,7 +98,7 @@ router.post('/rooms', requireAuth, async (req, res, next) => {
       req.session!.sessionId,
       parsed.data.deviceLabel
     );
-    res.status(201).json(created);
+    res.status(201).json({ ...created, serverTime: Date.now() });
   } catch (err) {
     next(err);
   }
@@ -183,6 +183,7 @@ router.post('/rooms/join', requireAuth, async (req, res, next) => {
         roomId: joinResult.roomId,
         requestId: joinResult.requestId,
         deviceLabel: parsed.data.deviceLabel,
+        expiresAt: joinResult.expiresAt,
       },
       timestamp: Date.now(),
     };
@@ -194,6 +195,8 @@ router.post('/rooms/join', requireAuth, async (req, res, next) => {
       roomId: joinResult.roomId,
       status: 'PENDING_APPROVAL',
       expiresInSeconds: joinResult.expiresInSeconds,
+      expiresAt: joinResult.expiresAt,
+      serverTime: Date.now(),
     });
   } catch (err) {
     next(err);
@@ -396,7 +399,14 @@ router.get('/signal/poll', requireAuth, async (req, res, next) => {
 
 // 11. Health checks
 router.get('/health/live', (_req, res) => res.json({ status: 'ok' }));
-router.get('/health/ready', (_req, res) => res.json({ status: 'ready', zeroDb: true }));
+router.get('/health/ready', async (_req, res, next) => {
+  try {
+    await globalStateStore.get('nexashare:health');
+    res.json({ status: 'ready' });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Mount router on both /api/v1 and /v1 so any Vercel rewrite matches seamlessly
 app.use('/api/v1', router);
@@ -404,6 +414,9 @@ app.use('/v1', router);
 
 // Global Error Handler Middleware
 app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof StateStoreError) {
+    return sendError(res, err.status, err.code, err.message, req.requestId);
+  }
   console.error('Express Error Handler Caught:', err);
   return res.status(500).json({
     error: {

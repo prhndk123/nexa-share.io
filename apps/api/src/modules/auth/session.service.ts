@@ -67,11 +67,9 @@ export class SessionService {
     if (!raw) return;
 
     const updated: EphemeralSession = { ...JSON.parse(raw), ...patch };
-    await this.store.set(
-      `session:${tokenHash}`,
-      JSON.stringify(updated),
-      ttlSeconds
-    );
+    await Promise.all([
+      this.store.set(`session:${tokenHash}`, JSON.stringify(updated), ttlSeconds),
+      this.store.set(`session:id:${sessionId}`, tokenHash, ttlSeconds),
+    ]);
   }
 }
-

@@ -18,7 +18,8 @@ import {
   Info,
 } from 'lucide-react';
 import type { ScreenState, SignalMessage } from '@nexashare/shared';
-import { api } from '../lib/api/client';
+import { api, ApiError } from '../lib/api/client';
+import { remainingSeconds } from '../lib/api/deadline';
 import {
   NexaShareTransferEngine,
   type TransferProgressSnapshot,
@@ -61,7 +62,10 @@ export function NexaShareApp() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string>('');
   const [inviteUrl, setInviteUrl] = useState<string>('');
-  const [expiryCountdown, setExpiryCountdown] = useState<number>(300);
+  const [expiryCountdown, setExpiryCountdown] = useState<number>(0);
+  const [roomExpiresAt, setRoomExpiresAt] = useState<string | null>(null);
+  const [pendingExpiresAt, setPendingExpiresAt] = useState<string | null>(null);
+  const [approvalCountdown, setApprovalCountdown] = useState<number>(0);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   // Guest State
@@ -69,6 +73,7 @@ export function NexaShareApp() {
   const [pendingGuestRequest, setPendingGuestRequest] = useState<{
     requestId: string;
     deviceLabel: string;
+    expiresAt: string;
   } | null>(null);
 
   // WebRTC & Transfer State
@@ -89,6 +94,7 @@ export function NexaShareApp() {
   const engineRef = useRef<NexaShareTransferEngine | null>(null);
   const pollTimerRef = useRef<number | null>(null);
   const lastSignalTimeRef = useRef<number>(0);
+  const serverClockOffsetRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Handle URL deep linking (e.g. /room/482-913 or ?code=482-913)
@@ -108,21 +114,48 @@ export function NexaShareApp() {
     }
   }, []);
 
-  // Countdown timer for room expiration
+  // Calculate from the server deadline; browser timer throttling must not extend it.
   useEffect(() => {
-    if (screenState === 'waiting_for_peer' && expiryCountdown > 0) {
-      const timer = window.setInterval(() => {
-        setExpiryCountdown((prev) => {
-          if (prev <= 1) {
-            setScreenState('expired');
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    if (screenState === 'waiting_for_peer' && roomExpiresAt) {
+      const update = () => {
+        const remaining = remainingSeconds(roomExpiresAt, serverClockOffsetRef.current);
+        setExpiryCountdown(remaining);
+        if (remaining === 0) {
+          setScreenState('expired');
+          setPendingGuestRequest(null);
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      };
+      update();
+      const timer = window.setInterval(update, 1000);
       return () => clearInterval(timer);
     }
-  }, [screenState, expiryCountdown]);
+  }, [screenState, roomExpiresAt]);
+
+  useEffect(() => {
+    const deadline = screenState === 'waiting_for_peer' ? pendingGuestRequest?.expiresAt
+      : screenState === 'join_pending' ? pendingExpiresAt : null;
+    if (!deadline) return;
+    const update = () => {
+      const remaining = remainingSeconds(deadline, serverClockOffsetRef.current);
+      setApprovalCountdown(remaining);
+      if (remaining === 0) {
+        if (screenState === 'waiting_for_peer') {
+          setPendingGuestRequest(null);
+        } else {
+          setPendingExpiresAt(null);
+          setScreenState('expired');
+          setErrorMessage('Waktu menunggu persetujuan habis. Silakan kirim permintaan lagi.');
+          if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      }
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [screenState, pendingGuestRequest, pendingExpiresAt]);
 
   // Clean up polling and engine on unmount
   useEffect(() => {
@@ -197,20 +230,41 @@ export function NexaShareApp() {
   // Signal Poller for Serverless Environment
   const startSignalPolling = (curToken: string, curRoomId: string, myRole: 'HOST' | 'GUEST') => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    lastSignalTimeRef.current = 0;
+    let polling = false;
 
-    pollTimerRef.current = window.setInterval(async () => {
+    const timer = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
       try {
         const { signals, serverTime } = await api.pollSignals(curToken, curRoomId, lastSignalTimeRef.current);
+        if (pollTimerRef.current !== timer) return;
+        serverClockOffsetRef.current = serverTime - Date.now();
         if (signals.length > 0) {
-          lastSignalTimeRef.current = serverTime;
+          lastSignalTimeRef.current = Math.max(lastSignalTimeRef.current, ...signals.map((signal) => signal.timestamp));
           for (const sig of signals) {
             await handleIncomingSignal(sig, myRole, curToken, curRoomId);
           }
         }
       } catch (err) {
+        if (pollTimerRef.current !== timer) return;
         console.warn('Poll signal error:', err);
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
+          clearInterval(timer);
+          pollTimerRef.current = null;
+          setRoomExpiresAt(null);
+          setPendingGuestRequest(null);
+          setPendingExpiresAt(null);
+          setScreenState('peer_disconnected');
+          setErrorMessage('Sesi koneksi tidak tersedia. Silakan buat atau gabung ke ruangan baru.');
+        } else if (err instanceof ApiError && err.status === 503) {
+          setErrorMessage(err.message);
+        }
+      } finally {
+        polling = false;
       }
     }, 800);
+    pollTimerRef.current = timer;
   };
 
   // Handle incoming signals from serverless inbox
@@ -222,10 +276,11 @@ export function NexaShareApp() {
   ) => {
     switch (signal.type) {
       case 'join:requested':
-        if (myRole === 'HOST') {
+        if (myRole === 'HOST' && Date.parse(signal.payload.expiresAt) > Date.now() + serverClockOffsetRef.current) {
           setPendingGuestRequest({
             requestId: signal.payload.requestId,
             deviceLabel: signal.payload.deviceLabel || 'Perangkat Tamu',
+            expiresAt: signal.payload.expiresAt,
           });
         }
         break;
@@ -283,7 +338,10 @@ export function NexaShareApp() {
       setRoomId(room.roomId);
       setRoomCode(room.code);
       setInviteUrl(room.inviteUrl);
-      setExpiryCountdown(300);
+      serverClockOffsetRef.current = room.serverTime - Date.now();
+      setRoomExpiresAt(room.expiresAt);
+      setPendingGuestRequest(null);
+      setExpiryCountdown(remainingSeconds(room.expiresAt, 0, room.serverTime));
       setScreenState('waiting_for_peer');
       setMode('send');
 
@@ -298,12 +356,14 @@ export function NexaShareApp() {
   const handleApproveGuest = async () => {
     if (!token || !roomId || !pendingGuestRequest) return;
     try {
+      setErrorMessage(null);
       setPeerDeviceLabel(pendingGuestRequest.deviceLabel);
       await api.approveJoin(token, roomId, pendingGuestRequest.requestId);
       setPendingGuestRequest(null);
       setScreenState('negotiating');
       await setupTransferEngine('HOST', token, roomId);
     } catch (err: any) {
+      if (err instanceof ApiError && err.code === 'APPROVAL_FAILED') setPendingGuestRequest(null);
       setErrorMessage(err.message || 'Gagal menyetujui perangkat.');
     }
   };
@@ -324,12 +384,15 @@ export function NexaShareApp() {
     if (!inputCode.trim()) return;
     try {
       setErrorMessage(null);
+      setPendingExpiresAt(null);
       setScreenState('join_pending');
       const session = await api.createSession();
       setToken(session.token);
 
       const joinRes = await api.requestJoin(session.token, inputCode, deviceLabel);
       setRoomId(joinRes.roomId);
+      serverClockOffsetRef.current = joinRes.serverTime - Date.now();
+      setPendingExpiresAt(joinRes.expiresAt);
 
       startSignalPolling(session.token, joinRes.roomId, 'GUEST');
     } catch (err: any) {
@@ -363,10 +426,15 @@ export function NexaShareApp() {
   // Reset Session
   const handleResetSession = () => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = null;
+    lastSignalTimeRef.current = 0;
     engineRef.current?.close();
     setToken(null);
     setRoomId(null);
     setRoomCode('');
+    setRoomExpiresAt(null);
+    setPendingExpiresAt(null);
+    setExpiryCountdown(0);
     setTransfers([]);
     setPendingGuestRequest(null);
     setIncomingOffer(null);
@@ -419,7 +487,7 @@ export function NexaShareApp() {
               Transfer Langsung Antar-Browser (Zero Cloud Storage)
             </p>
             <p className="text-amber-200/80 leading-relaxed">
-              File dikirim langsung antar-perangkat via WebRTC terenkripsi DTLS. Tidak ada file atau data yang diunggah ke server/database.
+              Isi berkas dikirim langsung antar-perangkat via WebRTC terenkripsi DTLS. Server hanya menyimpan metadata koneksi sementara.
             </p>
           </div>
         </section>
@@ -449,7 +517,7 @@ export function NexaShareApp() {
                 Kirim Berkas Bebas Cloud.
               </h1>
               <p className="text-sm sm:text-base text-slate-400 max-w-md mx-auto">
-                Transfer file ukuran besar antar-perangkat secara instan, aman, dan privat melalui jaringan WebRTC tanpa database.
+                Transfer file ukuran besar antar-perangkat secara instan, aman, dan privat melalui jaringan WebRTC tanpa mengunggah berkas ke server.
               </p>
             </div>
 
@@ -557,7 +625,7 @@ export function NexaShareApp() {
                       <span>{copiedLink ? 'Tautan Tersalin!' : 'Salin Tautan'}</span>
                     </button>
                     <span className="text-xs font-mono text-slate-400">
-                      Kedaluwarsa: {Math.floor(expiryCountdown / 60)}:{(expiryCountdown % 60).toString().padStart(2, '0')}
+                      Kode berlaku: {Math.floor(expiryCountdown / 60)}:{(expiryCountdown % 60).toString().padStart(2, '0')}
                     </span>
                   </div>
                 </div>
@@ -565,6 +633,17 @@ export function NexaShareApp() {
             )}
 
             {/* Guest Join Request Prompt */}
+            {(screenState === 'expired' || screenState === 'peer_disconnected') && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 flex flex-col gap-3">
+                <p className="text-sm text-amber-200">
+                  {screenState === 'expired' ? 'Masa berlaku kode ruangan sudah habis.' : 'Sesi koneksi sudah tidak tersedia.'}
+                </p>
+                <button type="button" onClick={handleCreateRoom} className="min-h-[44px] px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold self-start">
+                  Buat Kode Baru
+                </button>
+              </div>
+            )}
+
             {pendingGuestRequest && (
               <div className="rounded-xl border border-sky-500/50 bg-sky-950/30 p-5 flex flex-col gap-3.5 shadow-xl animate-in zoom-in-95">
                 <div className="flex items-center gap-3">
@@ -573,6 +652,9 @@ export function NexaShareApp() {
                     <h4 className="font-bold text-white text-sm">Permintaan Bergabung Masuk</h4>
                     <p className="text-xs text-sky-200/90 mt-0.5">
                       Perangkat <strong>"{pendingGuestRequest.deviceLabel}"</strong> ingin terhubung.
+                    </p>
+                    <p className="text-xs font-mono text-sky-200/90 mt-1">
+                      Waktu persetujuan: {Math.floor(approvalCountdown / 60)}:{(approvalCountdown % 60).toString().padStart(2, '0')}
                     </p>
                   </div>
                 </div>
@@ -705,7 +787,7 @@ export function NexaShareApp() {
                 {screenState === 'join_pending' && (
                   <div className="p-4 rounded-xl bg-sky-950/30 border border-sky-500/30 text-xs text-sky-200 flex items-center gap-3 animate-pulse">
                     <Radio className="w-4 h-4 text-sky-400 shrink-0" />
-                    <span>Permintaan terkirim. Menunggu pemilik ruangan menekan tombol "Approve"...</span>
+                    <span>Menunggu persetujuan pengirim. Sisa waktu: {Math.floor(approvalCountdown / 60)}:{(approvalCountdown % 60).toString().padStart(2, '0')}</span>
                   </div>
                 )}
               </div>
@@ -866,7 +948,7 @@ export function NexaShareApp() {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <span>Privasi & Arsitektur Zero-Database</span>
+                <span>Privasi & Transfer Antar-Browser</span>
               </h2>
               <button
                 type="button"
@@ -880,10 +962,10 @@ export function NexaShareApp() {
             <div className="flex flex-col gap-4">
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-1.5">
                 <h4 className="font-bold text-white text-xs uppercase font-mono text-emerald-400">
-                  1. Zero Cloud Storage & Zero Database
+                  1. Berkas Tidak Disimpan di Server
                 </h4>
                 <p className="text-xs text-slate-400">
-                  File tidak pernah diunggah, disimpan, atau dicatat di server atau database manapun. Transfer terjadi 100% langsung (Peer-to-Peer) antar browser melalui WebRTC <code>RTCDataChannel</code>.
+                  Isi berkas ditransfer langsung antar browser melalui WebRTC <code>RTCDataChannel</code>. Server hanya menyimpan metadata sesi dan koneksi sementara yang dihapus otomatis sesuai masa berlakunya.
                 </p>
               </div>
 
@@ -932,7 +1014,7 @@ export function NexaShareApp() {
           <span>NexaShare — P2P File Transfer (Vercel Serverless Edition)</span>
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            <span>Zero-DB • WebRTC DataChannel • DTLS Encrypted</span>
+            <span>P2P • WebRTC DataChannel • DTLS Encrypted</span>
           </span>
         </div>
       </footer>

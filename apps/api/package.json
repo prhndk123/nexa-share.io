@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc --noEmit && node build.mjs",
-    "test": "npm run build && node --test test/deployment.test.mjs",
+    "test": "npm run build && node --test test/deployment.test.mjs test/session-lifetime.test.mjs",
     "start": "tsx src/server.ts"
   },
   "dependencies": {

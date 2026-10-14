@@ -27,7 +27,7 @@ const EnvSchema = z.object({
     z.string().min(16).default('dev-room-code-hmac-secret-must-be-at-least-16-chars')
   ),
   ROOM_JOIN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
-  ROOM_PENDING_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  ROOM_PENDING_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   ROOM_CONNECTED_TTL_SECONDS: z.coerce.number().int().positive().default(7200),
 
   // STUN / TURN
@@ -50,5 +50,4 @@ const EnvSchema = z.object({
 });
 
 export const env = EnvSchema.parse(process.env);
-
 

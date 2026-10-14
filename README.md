@@ -1,16 +1,16 @@
 # NexaShare — Secure Browser-to-Browser P2P File Transfer (Vercel Serverless Edition)
 
-Aplikasi transfer berkas P2P lintas jaringan berbasis WebRTC `RTCDataChannel` **100% tanpa database (Zero-Database)** dan siap di-deploy langsung ke **Vercel**.
+Aplikasi transfer berkas P2P lintas jaringan berbasis WebRTC `RTCDataChannel`, tanpa menyimpan berkas di server. Deployment **Vercel** menggunakan Redis untuk metadata sesi dan signaling sementara dengan TTL.
 
 ---
 
 ## 🚀 Fitur Utama
-- **Zero Cloud Storage & Zero Database**: Berkas ditransfer langsung browser-ke-browser melalui WebRTC `RTCDataChannel`. Tidak ada berkas atau riwayat yang tersimpan di server atau database.
+- **Zero Cloud File Storage**: Berkas ditransfer langsung browser-ke-browser melalui WebRTC `RTCDataChannel`. Redis hanya menyimpan metadata sesi dan signaling sementara, bukan isi berkas.
 - **Enkripsi DTLS**: Seluruh transfer data terenkripsi otomatis secara end-to-end melalui Datagram Transport Layer Security (DTLS).
 - **Integritas SHA-256**: Pemeriksaan integritas hash SHA-256 secara streaming saat pengiriman dan penerimaan.
 - **Pairing Aman**: Kode ruangan 6 digit CSPRNG sekali pakai (kedaluwarsa 5 menit) dengan persetujuan host (*explicit host approval*).
 - **QR Code & Deep Link**: Masuk instan dengan memindai QR code atau membuka tautan `/room/:code`.
-- **Serverless Signaling**: Berjalan di atas Vercel Serverless Functions dengan dukungan Upstash Redis (Vercel KV) atau In-Memory, serta kompatibel dengan Pusher Channels untuk notifikasi instan.
+- **Serverless Signaling**: Deployment Vercel memakai Upstash Redis/KV bersama agar sesi tetap tersedia di semua instance. In-memory hanya untuk pengembangan lokal atau satu server yang terus berjalan.
 
 ---
 
@@ -24,8 +24,13 @@ Aplikasi transfer berkas P2P lintas jaringan berbasis WebRTC `RTCDataChannel` **
      - **web**: Vite di `apps/web`, menghasilkan `apps/web/dist`.
      - **api**: Express di `apps/api`, dengan sumber `src/app.ts`.
    - Build API menjalankan pemeriksaan TypeScript lalu membundel aplikasi dan dependensinya ke `apps/api/dist/app.cjs`. Bundle CommonJS ini dapat dijalankan walaupun Vercel memindahkan direktori output ke root function, tanpa mengandalkan import TypeScript atau symlink workspace.
-3. **Environment Variables (Opsional)**:
-   - Jika ingin menggunakan Upstash Redis untuk state multi-region, pasang integrasi **Upstash Redis** dari Vercel Marketplace (otomatis mengisi `KV_REST_API_URL` dan `KV_REST_API_TOKEN`). Jika tidak diisi, NexaShare otomatis berjalan dengan state in-memory.
+3. **Environment Variables (Wajib untuk Vercel)**:
+   - Buat Redis di [Upstash Console](https://console.upstash.com/) atau hubungkan integrasi Upstash dari Vercel Marketplace ke proyek ini.
+   - Pasang satu pasangan kredensial REST dari database yang sama: `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, atau `KV_REST_API_URL` + `KV_REST_API_TOKEN`. Gunakan token dengan izin menulis, bukan readonly token; `REDIS_URL` saja tidak dipakai oleh adapter REST ini.
+   - Terapkan pada environment Production (dan Preview jika digunakan), lalu redeploy.
+   - Default `ROOM_JOIN_TTL_SECONDS=300` dan `ROOM_PENDING_TTL_SECONDS=300`. Waktu persetujuan dibatasi sisa masa berlaku ruangan; countdown memakai deadline server.
+   - Tanpa kredensial lengkap, API mengembalikan `503 STATE_STORE_NOT_CONFIGURED`. Gangguan Redis mengembalikan `503 STATE_STORE_UNAVAILABLE`, tanpa beralih diam-diam ke memori instance.
+   - Periksa `/api/v1/health/ready` setelah deploy: status `200` menandakan adapter state bisa diakses, sedangkan `503` menandakan konfigurasi atau layanan belum siap.
    - STUN Google (`stun:stun.l.google.com:19302`) sudah aktif secara default.
    - Klik **Deploy**!
 
