@@ -48,6 +48,8 @@ export class NexaShareTransferEngine {
   private cancelledTransfers = new Set<string>();
   private speedSamples: Array<{ timestamp: number; bytes: number }> = [];
 
+  private pendingCandidates: RTCIceCandidateInit[] = [];
+
   constructor(
     private readonly callbacks: {
       onSignalOffer: (sdp: RTCSessionDescriptionInit) => void;
@@ -104,20 +106,51 @@ export class NexaShareTransferEngine {
 
   async handleRemoteOffer(offer: RTCSessionDescriptionInit): Promise<void> {
     if (!this.pc) return;
-    await this.pc.setRemoteDescription(offer);
-    const answer = await this.pc.createAnswer();
-    await this.pc.setLocalDescription(answer);
-    this.callbacks.onSignalAnswer(answer);
+    try {
+      await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await this.flushPendingCandidates();
+      const answer = await this.pc.createAnswer();
+      await this.pc.setLocalDescription(answer);
+      this.callbacks.onSignalAnswer(answer);
+    } catch (err) {
+      console.error('handleRemoteOffer error:', err);
+    }
   }
 
   async handleRemoteAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
     if (!this.pc) return;
-    await this.pc.setRemoteDescription(answer);
+    try {
+      await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      await this.flushPendingCandidates();
+    } catch (err) {
+      console.error('handleRemoteAnswer error:', err);
+    }
   }
 
   async handleRemoteIceCandidate(candidate: RTCIceCandidateInit | null): Promise<void> {
-    if (!this.pc) return;
-    await this.pc.addIceCandidate(candidate);
+    if (!this.pc || !candidate) return;
+    if (!this.pc.remoteDescription || !this.pc.remoteDescription.type) {
+      this.pendingCandidates.push(candidate);
+      return;
+    }
+    try {
+      await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.warn('addIceCandidate error:', err);
+    }
+  }
+
+  private async flushPendingCandidates(): Promise<void> {
+    if (!this.pc || this.pendingCandidates.length === 0) return;
+    const queued = [...this.pendingCandidates];
+    this.pendingCandidates = [];
+    for (const cand of queued) {
+      try {
+        await this.pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (err) {
+        console.warn('Flushing queued candidate error:', err);
+      }
+    }
   }
 
   private setupControlChannel(channel: RTCDataChannel): void {
@@ -460,6 +493,7 @@ export class NexaShareTransferEngine {
     this.incoming.clear();
     this.pendingAcceptResolvers.clear();
     this.pendingVerifyResolvers.clear();
+    this.pendingCandidates = [];
   }
 }
 
