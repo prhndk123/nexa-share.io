@@ -20,10 +20,10 @@ Aplikasi transfer berkas P2P lintas jaringan berbasis WebRTC `RTCDataChannel` **
    Pastikan repositori ini sudah di-push ke akun GitHub Anda.
 2. **Import ke Vercel**:
    - Buka [vercel.com](https://vercel.com) > **Add New** > **Project** > Pilih repositori ini.
-   - Vercel akan otomatis membaca file `vercel.json` dan mendeteksi:
-     - **Build Command**: `npm run build`
-     - **Output Directory**: `apps/web/dist`
-     - **Serverless Functions**: `api/index.ts`
+   - Gunakan **Root Directory** repositori (jangan pilih `apps/web`) agar Vercel membaca konfigurasi multi-services di `vercel.json`:
+     - **web**: Vite di `apps/web`, menghasilkan `apps/web/dist`.
+     - **api**: Express di `apps/api`, dengan sumber `src/app.ts`.
+   - Build API menjalankan pemeriksaan TypeScript lalu membundel aplikasi dan dependensinya ke `apps/api/dist/app.cjs`. Bundle CommonJS ini dapat dijalankan walaupun Vercel memindahkan direktori output ke root function, tanpa mengandalkan import TypeScript atau symlink workspace.
 3. **Environment Variables (Opsional)**:
    - Jika ingin menggunakan Upstash Redis untuk state multi-region, pasang integrasi **Upstash Redis** dari Vercel Marketplace (otomatis mengisi `KV_REST_API_URL` dan `KV_REST_API_TOKEN`). Jika tidak diisi, NexaShare otomatis berjalan dengan state in-memory.
    - STUN Google (`stun:stun.l.google.com:19302`) sudah aktif secara default.
@@ -65,4 +65,4 @@ Aplikasi tidak membutuhkan database PostgreSQL apapun.
 ```bash
 npm test
 ```
-*Menjalankan pengujian Vitest untuk codec protokol chunking biner 16 KiB dan skema sinyal WebRTC.*
+*Menjalankan pengujian Vitest untuk codec protokol chunking biner 16 KiB dan skema sinyal WebRTC, serta smoke test API terhadap bundle produksi yang disalin ke direktori sementara tanpa source atau node_modules. Smoke test memeriksa health check, pembuatan sesi, autentikasi, dan pembuatan ruangan.*
