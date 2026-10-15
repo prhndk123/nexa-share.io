@@ -10,12 +10,9 @@ import {
   File,
   X,
   RefreshCw,
-  Zap,
-  Globe,
   Radio,
   Lock,
   ArrowRight,
-  Info,
   Camera,
 } from 'lucide-react';
 import type { ScreenState, SignalMessage } from '@nexashare/shared';
@@ -522,21 +519,31 @@ export function NexaShareApp() {
     setErrorMessage(null);
   };
 
+  const statusLabels: Record<string, string> = {
+    idle: 'Siap menghubungkan', creating: 'Membuat ruang', waiting_for_peer: 'Menunggu perangkat',
+    join_pending: 'Menunggu izin', connected: 'Terhubung', negotiating: 'Menghubungkan', ready: 'Siap mengirim',
+    transferring: 'Mengirim berkas', verifying: 'Memeriksa berkas', completed: 'Selesai', expired: 'Kode kedaluwarsa',
+    room_full: 'Ruang sudah terisi', rejected: 'Ditolak', incorrect_code: 'Kode tidak ditemukan',
+    rate_limited: 'Coba lagi sebentar', signaling_lost: 'Koneksi terganggu', ice_failed: 'Gagal terhubung',
+    peer_disconnected: 'Perangkat terputus', transfer_failed: 'Transfer gagal', cancelled: 'Dibatalkan',
+  };
+  const transferLabels: Record<string, string> = {
+    QUEUED: 'Dalam antrean', OFFERED: 'Menunggu penerima', ACCEPTED: 'Diterima', SENDING: 'Mengirim',
+    RECEIVING: 'Menerima', VERIFYING: 'Memeriksa', COMPLETED: 'Selesai', REJECTED: 'Ditolak',
+    CANCELLED: 'Dibatalkan', FAILED: 'Gagal', INTERRUPTED: 'Terputus',
+  };
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between font-sans selection:bg-emerald-500 selection:text-slate-950">
+    <div className="app-shell">
       {/* Header */}
-      <header className="border-b border-slate-800/80 bg-slate-950/70 backdrop-blur sticky top-0 z-40 px-4 py-3">
-        <div className="max-w-4xl w-full mx-auto flex items-center justify-between">
+      <header className="site-header">
+        <div className="header-inner">
           <button
             type="button"
             onClick={handleResetSession}
             className="min-h-[44px] px-2 flex items-center gap-2.5 font-extrabold text-xl tracking-tight text-white focus:outline-none focus:ring-2 focus:ring-emerald-400 rounded-lg"
           >
-            <div className="h-4 w-4 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]" />
+            <span className="brand-symbol" aria-hidden="true"><i /><i /></span>
             <span>NexaShare</span>
-            <span className="text-[10px] font-mono tracking-widest uppercase bg-emerald-950/80 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
-              Serverless P2P
-            </span>
           </button>
 
           <nav className="flex items-center gap-2">
@@ -546,30 +553,17 @@ export function NexaShareApp() {
               className="min-h-[44px] px-3.5 text-xs sm:text-sm font-medium text-slate-400 hover:text-white transition rounded-lg hover:bg-slate-900 flex items-center gap-1.5"
             >
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Privasi & Keamanan</span>
+              <span>Privasi</span>
             </button>
           </nav>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
+      <main className="main-content">
         <div aria-live="polite" className="sr-only">
-          Status sesi: {screenState}
+          Status sesi: {statusLabels[screenState]}
         </div>
-
-        {/* Global Alert / Zero-Storage Notice */}
-        <section className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-xs sm:text-sm text-amber-200/90 flex items-start gap-3 shadow-lg">
-          <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex flex-col gap-0.5">
-            <p className="font-semibold text-amber-300">
-              Transfer Langsung Antar-Browser (Zero Cloud Storage)
-            </p>
-            <p className="text-amber-200/80 leading-relaxed">
-              Isi berkas dikirim langsung antar-perangkat via WebRTC terenkripsi DTLS. Server hanya menyimpan metadata koneksi sementara.
-            </p>
-          </div>
-        </section>
 
         {/* Error Banner */}
         {isReconnecting && (
@@ -585,7 +579,7 @@ export function NexaShareApp() {
             </div>
             <button
               type="button"
-              onClick={() => setErrorMessage(null)}
+              aria-label="Tutup pesan kesalahan" onClick={() => setErrorMessage(null)}
               className="p-1 hover:bg-rose-900/50 rounded-lg text-rose-400"
             >
               <X className="w-4 h-4" />
@@ -593,75 +587,40 @@ export function NexaShareApp() {
           </div>
         )}
 
-        {/* MODE: HOME */}
         {mode === 'home' && (
-          <section className="my-auto flex flex-col gap-6 py-8">
-            <div className="text-center flex flex-col gap-2">
-              <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-                Kirim Berkas Bebas Cloud.
-              </h1>
-              <p className="text-sm sm:text-base text-slate-400 max-w-md mx-auto">
-                Transfer file ukuran besar antar-perangkat secara instan, aman, dan privat melalui jaringan WebRTC tanpa mengunggah berkas ke server.
-              </p>
+          <section className="home-layout" aria-labelledby="home-title">
+            <div className="hero-copy">
+              <p className="eyebrow"><span /> DARI PERANGKAT KE PERANGKAT</p>
+              <h1 id="home-title">Kirim berkas ke<br /><em>perangkat lain.</em></h1>
+              <p className="hero-description">Kirim foto, video, atau dokumen ke perangkat lain. Buka browser, bagikan kode, lalu mulai transfer.</p>
+              <div className="hero-note"><Lock size={15} strokeWidth={1.5} /><span>Terenkripsi. Berkas tidak disimpan di server.</span></div>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
-              <button
-                type="button"
-                onClick={handleCreateRoom}
-                className="group p-6 rounded-2xl border border-slate-800 bg-slate-900/90 hover:bg-slate-900 hover:border-emerald-500/60 transition shadow-xl text-left flex flex-col justify-between min-h-[160px] relative overflow-hidden focus:ring-2 focus:ring-emerald-400"
-              >
-                <div className="flex items-center justify-between w-full">
-                  <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <Send className="w-6 h-6" />
-                  </div>
-                  <span className="text-xs font-mono uppercase text-emerald-400 font-semibold tracking-wider">
-                    Host Ruangan
-                  </span>
+            <div className="transfer-workspace">
+              <div className="glass-panel start-panel">
+                <div className="panel-caption"><span>RUANG TRANSFER</span><i /></div>
+                <div className="device-illustration" aria-hidden="true">
+                  <div className="device-sheet sheet-back"><File size={25} strokeWidth={1.2} /><i /><i /></div>
+                  <div className="device-sheet sheet-front"><Send size={28} strokeWidth={1.2} /><span>nexa.</span></div>
+                  <span className="illustration-orbit" />
                 </div>
-                <div>
-                  <h2 className="text-xl font-bold text-white group-hover:text-emerald-300 transition">
-                    Send Files
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Buat ruang transfer, bagikan kode 6 digit atau QR untuk mulai mengirim berkas.
-                  </p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMode('receive')}
-                className="group p-6 rounded-2xl border border-slate-800 bg-slate-900/90 hover:bg-slate-900 hover:border-sky-500/60 transition shadow-xl text-left flex flex-col justify-between min-h-[160px] relative overflow-hidden focus:ring-2 focus:ring-sky-400"
-              >
-                <div className="flex items-center justify-between w-full">
-                  <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                    <Download className="w-6 h-6" />
-                  </div>
-                  <span className="text-xs font-mono uppercase text-sky-400 font-semibold tracking-wider">
-                    Gabung Ruangan
-                  </span>
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-white group-hover:text-sky-300 transition">
-                    Receive Files
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Masukkan kode 6 digit dari perangkat pengirim dan terima berkas langsung.
-                  </p>
-                </div>
-              </button>
+                <div className="start-heading"><h2>Mau berbagi apa hari ini?</h2><p>Hubungkan dua perangkat untuk memulai.</p></div>
+                <button type="button" className="button button-primary start-send" onClick={handleCreateRoom}><Send size={18} />Kirim berkas<ArrowRight size={18} className="push-right" /></button>
+                <button type="button" className="receive-action" onClick={() => setMode('receive')}><span className="receive-icon"><Download size={19} /></span><span><strong>Terima berkas</strong><small>Sudah punya kode? Gabung di sini.</small></span><ArrowRight size={18} className="push-right" /></button>
+                <div className="panel-footnote"><Lock size={12} /> Tanpa akun. Cukup satu kode.</div>
+              </div>
+              <span className="workspace-caption">Biarkan kedua browser terbuka selama transfer.</span>
             </div>
           </section>
         )}
+        {mode !== 'home' && <button type="button" className="back-button" onClick={handleResetSession}><ArrowRight size={15} className="rotate-180" /> Kembali ke beranda</button>}
 
         {/* MODE: SEND (Host) */}
         {mode === 'send' && (
-          <section className="rounded-2xl border border-slate-800/90 bg-slate-900/90 backdrop-blur p-6 flex flex-col gap-6 shadow-2xl">
+          <section className="glass-panel session-panel flex flex-col gap-6">
             {/* Header Status */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-5">
               <div>
-                <p className="text-xs font-mono uppercase text-slate-400">Kode Transfer Ruangan</p>
+                <p className="text-xs font-mono uppercase text-slate-400">Kode ruangan</p>
                 <p className="text-3xl font-mono font-extrabold tracking-wider text-emerald-400 mt-0.5">
                   {roomCode || 'Membuat kode...'}
                 </p>
@@ -678,11 +637,11 @@ export function NexaShareApp() {
                         : 'bg-sky-400'
                     }`}
                   />
-                  <span>Status: {isReconnecting ? 'reconnecting' : screenState}</span>
+                  <span>{isReconnecting ? 'Menyambungkan kembali' : statusLabels[screenState]}</span>
                 </span>
                 {routeType !== 'UNKNOWN' && (
                   <span className="px-2.5 py-1 rounded-full text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-                    {routeType} P2P
+                    {routeType === 'RELAY' ? 'Melalui relay' : 'Koneksi langsung'}
                   </span>
                 )}
               </div>
@@ -695,9 +654,9 @@ export function NexaShareApp() {
                   <QRCodeDisplay value={(typeof window !== 'undefined' && window.location?.origin && roomCode) ? `${window.location.origin}/room/${roomCode}` : (inviteUrl || `${window.location.origin}/room/${roomCode}`)} size={160} />
                 </div>
                 <div className="flex flex-col gap-3 flex-1 text-center sm:text-left">
-                  <h3 className="font-bold text-white text-base">Bagikan ke Perangkat Lawan</h3>
+                  <h3 className="font-bold text-white text-base">Hubungkan perangkat lain</h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Scan QR code ini dengan kamera ponsel, atau salin tautan undangan langsung.
+                    Pindai kode QR ini atau bagikan tautan ke perangkat penerima.
                   </p>
                   <div className="flex items-center gap-2 pt-1">
                     <button
@@ -706,7 +665,7 @@ export function NexaShareApp() {
                       className="min-h-[44px] px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition flex-1 sm:flex-none border border-slate-700"
                     >
                       {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                      <span>{copiedLink ? 'Tautan Tersalin!' : 'Salin Tautan'}</span>
+                      <span>{copiedLink ? 'Tautan tersalin' : 'Salin tautan'}</span>
                     </button>
                     <span className="text-xs font-mono text-slate-400">
                       Kode berlaku: {Math.floor(expiryCountdown / 60)}:{(expiryCountdown % 60).toString().padStart(2, '0')}
@@ -733,7 +692,7 @@ export function NexaShareApp() {
                 <div className="flex items-center gap-3">
                   <Radio className="w-5 h-5 text-sky-400 animate-pulse shrink-0" />
                   <div>
-                    <h4 className="font-bold text-white text-sm">Permintaan Bergabung Masuk</h4>
+                    <h4 className="font-bold text-white text-sm">Izinkan perangkat ini?</h4>
                     <p className="text-xs text-sky-200/90 mt-0.5">
                       Perangkat <strong>"{pendingGuestRequest.deviceLabel}"</strong> ingin terhubung.
                     </p>
@@ -748,14 +707,14 @@ export function NexaShareApp() {
                     onClick={handleApproveGuest}
                     className="min-h-[44px] px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs tracking-wide transition shadow-lg flex-1 sm:flex-none"
                   >
-                    Izinkan (Approve)
+                    Izinkan
                   </button>
                   <button
                     type="button"
                     onClick={handleRejectGuest}
                     className="min-h-[44px] px-4 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-300 font-semibold text-xs transition border border-slate-700 flex-1 sm:flex-none"
                   >
-                    Tolak (Reject)
+                    Tolak
                   </button>
                 </div>
               </div>
@@ -775,7 +734,7 @@ export function NexaShareApp() {
                     setIsDragOver(false);
                     handleSendFiles(e.dataTransfer.files);
                   }}
-                  onClick={() => fileInputRef.current?.click()}
+                  role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition flex flex-col items-center justify-center gap-3 min-h-[180px] ${
                     isDragOver
                       ? 'border-emerald-400 bg-emerald-950/20 scale-[0.99]'
@@ -787,10 +746,10 @@ export function NexaShareApp() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-white">
-                      Klik untuk memilih berkas atau seret & lepas (Drag & Drop) di sini
+                      Pilih berkas atau seret ke sini
                     </p>
                     <p className="text-xs text-slate-400 mt-1">
-                      Mendukung foto, video, ZIP, dokumen (bisa pilih banyak berkas sekaligus).
+                      Kamu bisa memilih beberapa foto, video, atau dokumen sekaligus.
                     </p>
                   </div>
                   <input
@@ -809,27 +768,27 @@ export function NexaShareApp() {
 
         {/* MODE: RECEIVE (Guest) */}
         {mode === 'receive' && (
-          <section className="rounded-2xl border border-slate-800/90 bg-slate-900/90 backdrop-blur p-6 flex flex-col gap-6 shadow-2xl">
+          <section className="glass-panel session-panel flex flex-col gap-6">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div>
-                <h2 className="text-xl font-bold text-white">Gabung Ruang Transfer</h2>
+                <h2 className="text-xl font-bold text-white">Masuk dengan kode.</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
                   Masukkan 6 digit kode yang diberikan oleh perangkat pengirim.
                 </p>
               </div>
               <span className="px-3 py-1 rounded-full text-xs font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                {screenState}
+                {statusLabels[screenState]}
               </span>
             </div>
 
             {screenState !== 'ready' && screenState !== 'transferring' ? (
               <div className="flex flex-col gap-4">
                 <div>
-                  <label className="block text-xs font-mono uppercase text-slate-400 mb-1.5">
-                    Nama Perangkat Kamu
+                  <label htmlFor="device-label" className="block text-xs font-mono uppercase text-slate-400 mb-1.5">
+                    Nama perangkatmu
                   </label>
                   <input
-                    type="text"
+                    id="device-label" type="text"
                     value={deviceLabel}
                     onChange={(e) => setDeviceLabel(e.target.value)}
                     className="min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-4 text-sm text-white focus:outline-none focus:border-sky-400"
@@ -838,14 +797,14 @@ export function NexaShareApp() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-mono uppercase text-slate-400 mb-1.5">
-                    Kode Ruangan (6 Digit)
+                  <label htmlFor="join-code" className="block text-xs font-mono uppercase text-slate-400 mb-1.5">
+                    Kode ruangan
                   </label>
-                  <div className="flex flex-col sm:flex-row gap-2.5">
+                  <div className="join-controls">
                     <input
-                      type="text"
+                      id="join-code" type="text"
                       inputMode="numeric"
-                      placeholder="Contoh: 482-913"
+                      placeholder="000-000"
                       value={inputCode}
                       onChange={(e) => {
                         const digits = e.target.value.replace(/\D/g, '');
@@ -864,7 +823,7 @@ export function NexaShareApp() {
                       title="Buka scanner kamera untuk scan QR pengirim"
                     >
                       <Camera className="w-4 h-4 text-emerald-400" />
-                      <span>Scan QR</span>
+                      <span>Pindai QR</span>
                     </button>
                     <button
                       type="button"
@@ -873,7 +832,7 @@ export function NexaShareApp() {
                       className="min-h-[48px] px-7 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-sm tracking-wide transition shadow-lg flex items-center justify-center gap-2 shrink-0"
                     >
                       {screenState === 'join_pending' && <RefreshCw className="w-4 h-4 animate-spin" />}
-                      <span>{screenState === 'join_pending' ? 'Menunggu Izin...' : 'Connect'}</span>
+                      <span>{screenState === 'join_pending' ? 'Menunggu Izin...' : 'Hubungkan'}</span>
                     </button>
                   </div>
                 </div>
@@ -899,7 +858,7 @@ export function NexaShareApp() {
 
                 {/* Receiver can also send files bidirectionally */}
                 <div
-                  onClick={() => fileInputRef.current?.click()}
+                  role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
                   className="border border-dashed border-slate-700 hover:border-emerald-400 rounded-xl p-5 text-center cursor-pointer bg-slate-950/30 flex items-center justify-center gap-2 text-xs text-slate-300"
                 >
                   <Send className="w-4 h-4 text-emerald-400" />
@@ -921,14 +880,14 @@ export function NexaShareApp() {
         {/* Incoming File Prompt Modal */}
         {incomingOffer && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
-            <div className="max-w-md w-full bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 flex flex-col gap-4 shadow-2xl animate-in zoom-in-95">
+            <div role="dialog" aria-modal="true" aria-label="Terima berkas" className="max-w-md w-full glass-panel incoming-modal p-6 flex flex-col gap-4 shadow-2xl animate-in zoom-in-95">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   <File className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white text-base">Menerima Tawaran Berkas</h3>
-                  <p className="text-xs text-slate-400">Pengirim ingin mentransfer berkas berikut:</p>
+                  <h3 className="font-bold text-white text-base">Ada berkas untukmu.</h3>
+                  <p className="text-xs text-slate-400">Terima berkas dari perangkat yang terhubung?</p>
                 </div>
               </div>
 
@@ -965,10 +924,10 @@ export function NexaShareApp() {
 
         {/* Transfer Queue & Progress Cards */}
         {transfers.length > 0 && (
-          <section className="rounded-2xl border border-slate-800/90 bg-slate-900/90 p-5 flex flex-col gap-4 shadow-xl">
+          <section className="glass-panel session-panel flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
-                Antrean & Riwayat Transfer Berkas
+                Transfer berkas
               </h3>
               <span className="text-xs font-mono text-slate-400">{transfers.length} berkas</span>
             </div>
@@ -997,7 +956,7 @@ export function NexaShareApp() {
                     </div>
 
                     <span
-                      className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-md shrink-0 border ${
+                      className={`transfer-state text-[11px] font-mono font-bold px-2.5 py-1 rounded-md shrink-0 border ${
                         item.state === 'COMPLETED'
                           ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30'
                           : item.state === 'FAILED'
@@ -1005,12 +964,12 @@ export function NexaShareApp() {
                           : 'bg-sky-950/80 text-sky-300 border-sky-500/30'
                       }`}
                     >
-                      {item.state}
+                      {transferLabels[item.state] || item.state}
                     </span>
                   </div>
 
                   {/* Progress Bar */}
-                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div role="progressbar" aria-label={`Transfer ${item.fileName}`} aria-valuenow={Math.round(item.percentage)} aria-valuemin={0} aria-valuemax={100} className="w-full bg-slate-800 rounded-full h-1 overflow-hidden">
                     <div
                       className={`h-full transition-all duration-300 rounded-full ${
                         item.state === 'COMPLETED' ? 'bg-emerald-400' : 'bg-sky-400'
@@ -1024,7 +983,7 @@ export function NexaShareApp() {
                     <div className="flex items-center justify-between text-[11px] text-emerald-400/90 pt-1 border-t border-slate-900">
                       <span className="flex items-center gap-1.5">
                         <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>SHA-256 Integritas Valid</span>
+                        <span>Integritas berkas terverifikasi</span>
                       </span>
                       <span className="font-mono text-[10px] text-slate-500 truncate max-w-[200px]">
                         {item.sha256}
@@ -1039,15 +998,15 @@ export function NexaShareApp() {
 
         {/* MODE: PRIVACY & ARCHITECTURE */}
         {mode === 'privacy' && (
-          <section className="rounded-2xl border border-slate-800/90 bg-slate-900/90 p-6 flex flex-col gap-5 text-sm text-slate-300 leading-relaxed shadow-2xl">
+          <section className="glass-panel session-panel privacy-panel flex flex-col gap-5 text-sm leading-relaxed">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                <span>Privasi & Transfer Antar-Browser</span>
+                <span>Privasi berkasmu</span>
               </h2>
               <button
                 type="button"
-                onClick={() => setMode('home')}
+                aria-label="Tutup informasi privasi" onClick={() => setMode('home')}
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -1057,37 +1016,37 @@ export function NexaShareApp() {
             <div className="flex flex-col gap-4">
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-1.5">
                 <h4 className="font-bold text-white text-xs uppercase font-mono text-emerald-400">
-                  1. Berkas Tidak Disimpan di Server
+                  1. Berkas tanpa penyimpanan cloud
                 </h4>
                 <p className="text-xs text-slate-400">
-                  Isi berkas ditransfer langsung antar browser melalui WebRTC <code>RTCDataChannel</code>. Server hanya menyimpan metadata sesi dan koneksi sementara yang dihapus otomatis sesuai masa berlakunya.
+                  Kedua browser bertukar berkas melalui koneksi WebRTC. Server menyimpan metadata koneksi sementara untuk mempertemukan perangkat. Relay, jika diperlukan, meneruskan data terenkripsi.
                 </p>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-1.5">
                 <h4 className="font-bold text-white text-xs uppercase font-mono text-sky-400">
-                  2. Enkripsi Ujung-ke-Ujung (DTLS)
+                  2. Koneksi terenkripsi
                 </h4>
                 <p className="text-xs text-slate-400">
-                  Seluruh paket data dienkripsi secara otomatis menggunakan protokol standar WebRTC DTLS (Datagram Transport Layer Security). Tidak ada pihak ketiga di jaringan yang dapat melihat isi berkas.
+                  WebRTC mengenkripsi berkas selama perjalanan dengan DTLS, termasuk ketika koneksi menggunakan relay.
                 </p>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-1.5">
                 <h4 className="font-bold text-white text-xs uppercase font-mono text-amber-400">
-                  3. Verifikasi Integritas SHA-256
+                  3. Pemeriksaan isi berkas
                 </h4>
                 <p className="text-xs text-slate-400">
-                  Setiap berkas dihitung digest SHA-256 secara streaming saat dikirim dan saat diterima. Sistem memastikan berkas tidak rusak atau terpotong sebelum disimpan.
+                  NexaShare membandingkan SHA-256 pada kedua perangkat untuk memeriksa apakah penerima mendapatkan berkas secara utuh.
                 </p>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col gap-1.5">
                 <h4 className="font-bold text-white text-xs uppercase font-mono text-purple-400">
-                  4. Kode Ruangan Sekali Pakai (TTL 5 Menit)
+                  4. Kamu menentukan siapa yang bergabung
                 </h4>
                 <p className="text-xs text-slate-400">
-                  Kode 6 digit dibuat menggunakan generator angka acak kriptografis (CSPRNG) dan otomatis kedaluwarsa setelah 5 menit atau setelah ruangan dipasangkan.
+                  Kode ruangan berlaku selama lima menit untuk menghubungkan perangkat. Pengirim harus menyetujui permintaan bergabung sebelum transfer dimulai.
                 </p>
               </div>
             </div>
@@ -1104,12 +1063,12 @@ export function NexaShareApp() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 px-4 text-center text-xs text-slate-500">
-        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>NexaShare — P2P File Transfer (Vercel Serverless Edition)</span>
+      <footer className="site-footer">
+        <div className="footer-inner">
+          <span>Berbagi, sesederhana itu.</span>
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            <span>P2P • WebRTC DataChannel • DTLS Encrypted</span>
+            <span>Transfer terenkripsi antar-browser</span>
           </span>
         </div>
       </footer>

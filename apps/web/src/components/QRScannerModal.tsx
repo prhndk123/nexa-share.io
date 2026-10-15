@@ -230,7 +230,7 @@ export function QRScannerModal({ isOpen, onClose, onScanSuccess }: QRScannerModa
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col">
+      <div role="dialog" aria-modal="true" aria-labelledby="scanner-title" className="glass-panel scanner-modal relative w-full max-w-md overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/90 z-10">
           <div className="flex items-center gap-2.5">
@@ -238,13 +238,13 @@ export function QRScannerModal({ isOpen, onClose, onScanSuccess }: QRScannerModa
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">Pindai QR Code</h3>
-              <p className="text-xs text-slate-400">Arahkan kamera ke QR code perangkat pengirim</p>
+              <h3 id="scanner-title" className="font-bold text-white text-base">Pindai kode QR</h3>
+              <p className="text-xs text-slate-400">Arahkan kamera ke kode QR pengirim</p>
             </div>
           </div>
           <button
             type="button"
-            onClick={onClose}
+            aria-label="Tutup pemindai QR" onClick={onClose}
             className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition"
           >
             <X className="w-5 h-5" />
@@ -339,7 +339,7 @@ export function QRScannerModal({ isOpen, onClose, onScanSuccess }: QRScannerModa
 
           <button
             type="button"
-            onClick={onClose}
+            aria-label="Tutup pemindai QR" onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition"
           >
             Tutup

@@ -2,13 +2,13 @@
   "id": "com.nexashare.app",
   "name": "NexaShare — P2P File Transfer",
   "short_name": "NexaShare",
-  "description": "Transfer file P2P langsung antar-perangkat via WebRTC tanpa database dan tanpa cloud storage.",
+  "description": "Kirim foto, video, dan dokumen antar-perangkat lewat browser. Tanpa akun dan tanpa penyimpanan berkas di server.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#020617",
-  "theme_color": "#10b981",
+  "background_color": "#111513",
+  "theme_color": "#111513",
   "categories": ["utilities", "productivity"],
   "icons": [
     {

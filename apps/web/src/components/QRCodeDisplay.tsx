@@ -15,8 +15,8 @@ export function QRCodeDisplay({ value, size = 180 }: QRCodeDisplayProps) {
       width: size,
       margin: 1.5,
       color: {
-        dark: '#10b981', // Emerald 500
-        light: '#020617', // Slate 950
+        dark: '#20372a',
+        light: '#edf1e8',
       },
     })
       .then(setDataUrl)
@@ -35,7 +35,7 @@ export function QRCodeDisplay({ value, size = 180 }: QRCodeDisplayProps) {
   }
 
   return (
-    <div className="p-2.5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl inline-block">
+    <div className="qr-code">
       <img
         src={dataUrl}
         alt={`QR Code untuk ${value}`}
