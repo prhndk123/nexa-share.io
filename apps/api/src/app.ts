@@ -94,9 +94,14 @@ router.post('/rooms', requireAuth, async (req, res, next) => {
       return sendError(res, 400, 'INVALID_PAYLOAD', 'Label perangkat tidak valid.', req.requestId);
     }
 
+    const origin =
+      (req.headers.origin as string) ||
+      (req.get('host') ? `${req.protocol}://${req.get('host')}` : undefined);
+
     const created = await roomService.createRoom(
       req.session!.sessionId,
-      parsed.data.deviceLabel
+      parsed.data.deviceLabel,
+      origin
     );
     res.status(201).json({ ...created, serverTime: Date.now() });
   } catch (err) {

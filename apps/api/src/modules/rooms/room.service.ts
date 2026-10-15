@@ -65,7 +65,7 @@ export class RoomService {
     return ipCount <= env.RATE_JOIN_LIMIT && sessionCount <= env.RATE_JOIN_LIMIT;
   }
 
-  async createRoom(hostSessionId: string, deviceLabel: string) {
+  async createRoom(hostSessionId: string, deviceLabel: string, origin?: string) {
     let code = '';
     let codeHmac = '';
 
@@ -101,12 +101,14 @@ export class RoomService {
       { roomId, role: 'HOST', canSignal: false }
     );
 
+    const baseOrigin = (origin || env.APP_ORIGIN || '').replace(/\/$/, '') || 'https://nexa-shareio.vercel.app';
+
     return {
       roomId,
       code,
       expiresAt,
       status: record.status,
-      inviteUrl: `${env.APP_ORIGIN}/room/${code}`,
+      inviteUrl: `${baseOrigin}/room/${code}`,
     };
   }
 

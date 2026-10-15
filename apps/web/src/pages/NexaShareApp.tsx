@@ -16,6 +16,7 @@ import {
   Lock,
   ArrowRight,
   Info,
+  Camera,
 } from 'lucide-react';
 import type { ScreenState, SignalMessage } from '@nexashare/shared';
 import { api, ApiError } from '../lib/api/client';
@@ -26,6 +27,7 @@ import {
   type TransferProgressSnapshot,
 } from '../lib/webrtc/transfer-engine';
 import { QRCodeDisplay } from '../components/QRCodeDisplay';
+import { QRScannerModal } from '../components/QRScannerModal';
 
 function detectDeviceLabel(): string {
   const ua = navigator.userAgent;
@@ -71,6 +73,7 @@ export function NexaShareApp() {
 
   // Guest State
   const [inputCode, setInputCode] = useState<string>('');
+  const [showScanner, setShowScanner] = useState<boolean>(false);
   const [pendingGuestRequest, setPendingGuestRequest] = useState<{
     requestId: string;
     deviceLabel: string;
@@ -388,7 +391,10 @@ export function NexaShareApp() {
       const room = await api.createRoom(session.token, deviceLabel);
       setRoomId(room.roomId);
       setRoomCode(room.code);
-      setInviteUrl(room.inviteUrl);
+      const dynamicInvite = typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}/room/${room.code}`
+        : room.inviteUrl;
+      setInviteUrl(dynamicInvite);
       serverClockOffsetRef.current = room.serverTime - Date.now();
       setRoomExpiresAt(room.expiresAt);
       setPendingGuestRequest(null);
@@ -431,8 +437,9 @@ export function NexaShareApp() {
   };
 
   // Guest: Join Room Flow
-  const handleJoinRoom = async () => {
-    if (!inputCode.trim()) return;
+  const handleJoinRoom = async (codeToJoin?: string) => {
+    const targetCode = (typeof codeToJoin === 'string' ? codeToJoin : inputCode).trim();
+    if (!targetCode) return;
     try {
       hasConnectedRef.current = false;
       setIsReconnecting(false);
@@ -446,7 +453,7 @@ export function NexaShareApp() {
       const session = await api.createSession();
       setToken(session.token);
 
-      const joinRes = await api.requestJoin(session.token, inputCode, deviceLabel);
+      const joinRes = await api.requestJoin(session.token, targetCode, deviceLabel);
       setRoomId(joinRes.roomId);
       serverClockOffsetRef.current = joinRes.serverTime - Date.now();
       setPendingExpiresAt(joinRes.expiresAt);
@@ -456,6 +463,12 @@ export function NexaShareApp() {
       setErrorMessage(err.message || 'Gagal bergabung dengan ruangan.');
       setScreenState('incorrect_code');
     }
+  };
+
+  const handleScanSuccess = (scannedCode: string) => {
+    setInputCode(scannedCode);
+    setShowScanner(false);
+    handleJoinRoom(scannedCode);
   };
 
   // Send File Handler
@@ -477,7 +490,9 @@ export function NexaShareApp() {
 
   // Copy invitation link
   const handleCopyLink = () => {
-    const link = inviteUrl || `${window.location.origin}/room/${roomCode}`;
+    const link = (typeof window !== 'undefined' && window.location?.origin && roomCode)
+      ? `${window.location.origin}/room/${roomCode}`
+      : inviteUrl;
     navigator.clipboard.writeText(link).then(() => {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
@@ -677,7 +692,7 @@ export function NexaShareApp() {
             {screenState === 'waiting_for_peer' && (
               <div className="flex flex-col sm:flex-row items-center gap-6 p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
                 <div className="shrink-0">
-                  <QRCodeDisplay value={inviteUrl || `${window.location.origin}/room/${roomCode}`} size={160} />
+                  <QRCodeDisplay value={(typeof window !== 'undefined' && window.location?.origin && roomCode) ? `${window.location.origin}/room/${roomCode}` : (inviteUrl || `${window.location.origin}/room/${roomCode}`)} size={160} />
                 </div>
                 <div className="flex flex-col gap-3 flex-1 text-center sm:text-left">
                   <h3 className="font-bold text-white text-base">Bagikan ke Perangkat Lawan</h3>
@@ -826,7 +841,7 @@ export function NexaShareApp() {
                   <label className="block text-xs font-mono uppercase text-slate-400 mb-1.5">
                     Kode Ruangan (6 Digit)
                   </label>
-                  <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2.5">
                     <input
                       type="text"
                       inputMode="numeric"
@@ -844,9 +859,18 @@ export function NexaShareApp() {
                     />
                     <button
                       type="button"
-                      disabled={screenState === 'join_pending'}
-                      onClick={handleJoinRoom}
-                      className="min-h-[48px] px-8 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-sm tracking-wide transition shadow-lg flex items-center justify-center gap-2"
+                      onClick={() => setShowScanner(true)}
+                      className="min-h-[48px] px-4 rounded-xl border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 font-bold text-xs tracking-wide transition shadow-lg flex items-center justify-center gap-2 hover:border-emerald-400 shrink-0"
+                      title="Buka scanner kamera untuk scan QR pengirim"
+                    >
+                      <Camera className="w-4 h-4 text-emerald-400" />
+                      <span>Scan QR</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={screenState === 'join_pending' || !inputCode.trim()}
+                      onClick={() => handleJoinRoom()}
+                      className="min-h-[48px] px-7 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-bold text-sm tracking-wide transition shadow-lg flex items-center justify-center gap-2 shrink-0"
                     >
                       {screenState === 'join_pending' && <RefreshCw className="w-4 h-4 animate-spin" />}
                       <span>{screenState === 'join_pending' ? 'Menunggu Izin...' : 'Connect'}</span>
@@ -1089,6 +1113,13 @@ export function NexaShareApp() {
           </span>
         </div>
       </footer>
+
+      {/* In-App QR Camera Scanner Modal */}
+      <QRScannerModal
+        isOpen={showScanner}
+        onClose={() => setShowScanner(false)}
+        onScanSuccess={handleScanSuccess}
+      />
     </div>
   );
 }

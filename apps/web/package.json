@@ -16,6 +16,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.453.0",
     "postcss": "^8.4.47",
     "qrcode": "^1.5.4",

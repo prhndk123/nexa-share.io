@@ -12,3 +12,13 @@ if (rootEl) {
     </React.StrictMode>
   );
 }
+
+// Register PWA Service Worker in production
+if ('serviceWorker' in navigator && !import.meta.env.DEV) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => console.log('NexaShare PWA ServiceWorker registered:', reg.scope))
+      .catch((err) => console.warn('NexaShare PWA ServiceWorker failed:', err));
+  });
+}
