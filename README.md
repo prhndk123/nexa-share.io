@@ -32,6 +32,8 @@ Aplikasi transfer berkas P2P lintas jaringan berbasis WebRTC `RTCDataChannel`, t
    - Tanpa kredensial lengkap, API mengembalikan `503 STATE_STORE_NOT_CONFIGURED`. Gangguan Redis mengembalikan `503 STATE_STORE_UNAVAILABLE`, tanpa beralih diam-diam ke memori instance.
    - Periksa `/api/v1/health/ready` setelah deploy: status `200` menandakan adapter state bisa diakses, sedangkan `503` menandakan konfigurasi atau layanan belum siap.
    - STUN Google (`stun:stun.l.google.com:19302`) sudah aktif secara default.
+   - Untuk Wi-Fi berbeda atau data seluler, STUN saja belum tentu dapat membuat koneksi langsung. Sediakan [server TURN](https://webrtc.org/getting-started/turn-server) lalu isi `TURN_URLS`, `TURN_USERNAME`, dan `TURN_CREDENTIAL` menggunakan kredensial dari provider yang sama. Sertakan endpoint TCP/TLS dari provider jika tersedia untuk jaringan yang membatasi UDP, lalu redeploy.
+   - Redis mengoordinasikan sesi/signaling; TURN meneruskan trafik WebRTC terenkripsi saat koneksi langsung gagal. TURN tidak menyimpan berkas. Tanpa konfigurasi TURN, aplikasi hanya dapat mencoba koneksi langsung.
    - Klik **Deploy**!
 
 ---

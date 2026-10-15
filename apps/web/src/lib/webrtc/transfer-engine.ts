@@ -49,12 +49,17 @@ export class NexaShareTransferEngine {
   private speedSamples: Array<{ timestamp: number; bytes: number }> = [];
 
   private pendingCandidates: RTCIceCandidateInit[] = [];
+  private pendingLocalCandidates: Array<RTCIceCandidateInit | null> = [];
+  private localDescriptionSignaled = false;
+  private outgoingSignals: Promise<void> = Promise.resolve();
+  private readyReported = false;
 
   constructor(
     private readonly callbacks: {
-      onSignalOffer: (sdp: RTCSessionDescriptionInit) => void;
-      onSignalAnswer: (sdp: RTCSessionDescriptionInit) => void;
-      onSignalIceCandidate: (candidate: RTCIceCandidateInit | null) => void;
+      onSignalOffer: (sdp: RTCSessionDescriptionInit) => void | Promise<void>;
+      onSignalAnswer: (sdp: RTCSessionDescriptionInit) => void | Promise<void>;
+      onSignalIceCandidate: (candidate: RTCIceCandidateInit | null) => void | Promise<void>;
+      onSignalingError?: (error: Error) => void;
       onConnectionStateChange: (
         state: RTCPeerConnectionState,
         route: 'DIRECT' | 'RELAY' | 'UNKNOWN'
@@ -73,13 +78,16 @@ export class NexaShareTransferEngine {
     this.pc = new RTCPeerConnection({ iceServers });
 
     this.pc.onicecandidate = (event) => {
-      this.callbacks.onSignalIceCandidate(event.candidate ? event.candidate.toJSON() : null);
+      const candidate = event.candidate ? event.candidate.toJSON() : null;
+      if (!this.localDescriptionSignaled) {
+        this.pendingLocalCandidates.push(candidate);
+      } else {
+        void this.queueSignal(() => this.callbacks.onSignalIceCandidate(candidate)).catch(() => undefined);
+      }
     };
 
-    this.pc.onconnectionstatechange = async () => {
-      if (!this.pc) return;
-      const route = await this.detectCandidateRoute();
-      this.callbacks.onConnectionStateChange(this.pc.connectionState, route);
+    this.pc.onconnectionstatechange = () => {
+      void this.reportConnectionState();
     };
 
     if (isInitiator) {
@@ -90,7 +98,7 @@ export class NexaShareTransferEngine {
 
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
-      this.callbacks.onSignalOffer(offer);
+      await this.sendDescription(() => this.callbacks.onSignalOffer(offer));
     } else {
       this.pc.ondatachannel = (event) => {
         if (event.channel.label === 'nexashare-control') {
@@ -111,9 +119,10 @@ export class NexaShareTransferEngine {
       await this.flushPendingCandidates();
       const answer = await this.pc.createAnswer();
       await this.pc.setLocalDescription(answer);
-      this.callbacks.onSignalAnswer(answer);
+      await this.sendDescription(() => this.callbacks.onSignalAnswer(answer));
     } catch (err) {
       console.error('handleRemoteOffer error:', err);
+      throw err;
     }
   }
 
@@ -124,6 +133,7 @@ export class NexaShareTransferEngine {
       await this.flushPendingCandidates();
     } catch (err) {
       console.error('handleRemoteAnswer error:', err);
+      throw err;
     }
   }
 
@@ -153,7 +163,45 @@ export class NexaShareTransferEngine {
     }
   }
 
+  private queueSignal(send: () => void | Promise<void>): Promise<void> {
+    const pc = this.pc;
+    const pending = this.outgoingSignals.then(() => {
+      if (pc && pc === this.pc) return send();
+    });
+    this.outgoingSignals = pending.catch((error) => {
+      if (pc === this.pc) this.callbacks.onSignalingError?.(error instanceof Error ? error : new Error(String(error)));
+    });
+    return pending;
+  }
+
+  private async sendDescription(send: () => void | Promise<void>): Promise<void> {
+    await this.queueSignal(send);
+    this.localDescriptionSignaled = true;
+    const candidates = this.pendingLocalCandidates.splice(0);
+    for (const candidate of candidates) {
+      await this.queueSignal(() => this.callbacks.onSignalIceCandidate(candidate));
+    }
+  }
+
+  private async reportConnectionState(): Promise<void> {
+    const pc = this.pc;
+    if (!pc) return;
+    const state = pc.connectionState;
+    if (state === 'connected') {
+      if (this.readyReported || this.controlChannel?.readyState !== 'open' || this.dataChannel?.readyState !== 'open') return;
+    }
+    const route = await this.detectCandidateRoute().catch(() => 'UNKNOWN' as const);
+    if (pc !== this.pc) return;
+    if (pc.connectionState !== state) return this.reportConnectionState();
+    if (state === 'connected') {
+      if (this.readyReported) return;
+      this.readyReported = true;
+    }
+    this.callbacks.onConnectionStateChange(state, route);
+  }
+
   private setupControlChannel(channel: RTCDataChannel): void {
+    channel.onopen = () => { void this.reportConnectionState(); };
     channel.onmessage = async (event) => {
       if (typeof event.data !== 'string') return;
       const parsed = TransferControlMessageSchema.safeParse(JSON.parse(event.data));
@@ -222,6 +270,7 @@ export class NexaShareTransferEngine {
   }
 
   private setupDataChannel(channel: RTCDataChannel): void {
+    channel.onopen = () => { void this.reportConnectionState(); };
     channel.binaryType = 'arraybuffer';
     channel.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
 
@@ -494,6 +543,8 @@ export class NexaShareTransferEngine {
     this.pendingAcceptResolvers.clear();
     this.pendingVerifyResolvers.clear();
     this.pendingCandidates = [];
+    this.pendingLocalCandidates = [];
+    this.localDescriptionSignaled = false;
+    this.readyReported = false;
   }
 }
-

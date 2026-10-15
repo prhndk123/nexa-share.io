@@ -20,6 +20,7 @@ import {
 import type { ScreenState, SignalMessage } from '@nexashare/shared';
 import { api, ApiError } from '../lib/api/client';
 import { remainingSeconds } from '../lib/api/deadline';
+import { SignalInbox } from '../lib/api/signal-inbox';
 import {
   NexaShareTransferEngine,
   type TransferProgressSnapshot,
@@ -93,7 +94,7 @@ export function NexaShareApp() {
 
   const engineRef = useRef<NexaShareTransferEngine | null>(null);
   const pollTimerRef = useRef<number | null>(null);
-  const lastSignalTimeRef = useRef<number>(0);
+  const signalInboxRef = useRef(new SignalInbox());
   const serverClockOffsetRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -169,6 +170,9 @@ export function NexaShareApp() {
   const setupTransferEngine = async (currentRole: 'HOST' | 'GUEST', curToken: string, curRoomId: string) => {
     try {
       const { iceServers } = await api.getIceServers(curToken);
+      const relayConfigured = iceServers.some((server) =>
+        (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^turns?:/i.test(url))
+      );
 
       const engine = new NexaShareTransferEngine({
         onSignalOffer: async (sdp) => {
@@ -182,18 +186,24 @@ export function NexaShareApp() {
             await api.sendSignal(curToken, curRoomId, 'webrtc:ice-candidate', currentRole === 'HOST' ? 'GUEST' : 'HOST', { candidate });
           }
         },
+        onSignalingError: (error) => {
+          setScreenState('ice_failed');
+          setErrorMessage(`Pertukaran informasi koneksi gagal: ${error.message}`);
+        },
         onConnectionStateChange: (state, route) => {
           setRouteType(route);
           if (state === 'connected') {
             setScreenState('ready');
-            // Once connected, signaling handshake is done: stop polling!
+            // The engine reports connected only after both data channels open.
             if (pollTimerRef.current) {
               clearInterval(pollTimerRef.current);
               pollTimerRef.current = null;
             }
           } else if (state === 'failed') {
             setScreenState('ice_failed');
-            setErrorMessage('Gagal menghubungkan koneksi P2P. Pastikan firewall atau jaringan mengizinkan koneksi WebRTC.');
+            setErrorMessage(relayConfigured
+              ? 'Koneksi langsung dan relay gagal. Coba jaringan lain atau periksa layanan relay.'
+              : 'Koneksi langsung gagal. Untuk Wi-Fi berbeda atau data seluler, layanan relay perlu diaktifkan oleh pengelola aplikasi.');
           } else if (state === 'disconnected') {
             setScreenState('peer_disconnected');
           }
@@ -219,33 +229,36 @@ export function NexaShareApp() {
         },
       });
 
+      engineRef.current?.close();
       engineRef.current = engine;
       await engine.initialize(iceServers, currentRole === 'HOST');
     } catch (err: any) {
       console.error('Setup transfer engine error:', err);
+      setScreenState('ice_failed');
       setErrorMessage(err.message || 'Gagal memulai koneksi transfer.');
+      engineRef.current?.close();
+      engineRef.current = null;
+      throw err;
     }
   };
 
   // Signal Poller for Serverless Environment
   const startSignalPolling = (curToken: string, curRoomId: string, myRole: 'HOST' | 'GUEST') => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    lastSignalTimeRef.current = 0;
+    signalInboxRef.current.clear();
     let polling = false;
 
     const timer = window.setInterval(async () => {
       if (polling) return;
       polling = true;
       try {
-        const { signals, serverTime } = await api.pollSignals(curToken, curRoomId, lastSignalTimeRef.current);
+        const { signals, serverTime } = await api.pollSignals(curToken, curRoomId, 0);
         if (pollTimerRef.current !== timer) return;
         serverClockOffsetRef.current = serverTime - Date.now();
-        if (signals.length > 0) {
-          lastSignalTimeRef.current = Math.max(lastSignalTimeRef.current, ...signals.map((signal) => signal.timestamp));
-          for (const sig of signals) {
-            await handleIncomingSignal(sig, myRole, curToken, curRoomId);
-          }
-        }
+        await signalInboxRef.current.consume(signals, async (signal) => {
+          if (pollTimerRef.current !== timer) return false;
+          return handleIncomingSignal(signal, myRole, curToken, curRoomId);
+        });
       } catch (err) {
         if (pollTimerRef.current !== timer) return;
         console.warn('Poll signal error:', err);
@@ -301,19 +314,22 @@ export function NexaShareApp() {
         break;
 
       case 'webrtc:offer':
-        if (engineRef.current && signal.payload.sdp) {
+        if (!engineRef.current) return false;
+        if (signal.payload.sdp) {
           await engineRef.current.handleRemoteOffer(signal.payload.sdp);
         }
         break;
 
       case 'webrtc:answer':
-        if (engineRef.current && signal.payload.sdp) {
+        if (!engineRef.current) return false;
+        if (signal.payload.sdp) {
           await engineRef.current.handleRemoteAnswer(signal.payload.sdp);
         }
         break;
 
       case 'webrtc:ice-candidate':
-        if (engineRef.current && signal.payload.candidate) {
+        if (!engineRef.current) return false;
+        if (signal.payload.candidate) {
           await engineRef.current.handleRemoteIceCandidate(signal.payload.candidate);
         }
         break;
@@ -329,6 +345,10 @@ export function NexaShareApp() {
   // Host: Create Room Flow
   const handleCreateRoom = async () => {
     try {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+      engineRef.current?.close();
+      engineRef.current = null;
       setErrorMessage(null);
       setScreenState('creating');
       const session = await api.createSession();
@@ -383,6 +403,10 @@ export function NexaShareApp() {
   const handleJoinRoom = async () => {
     if (!inputCode.trim()) return;
     try {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+      engineRef.current?.close();
+      engineRef.current = null;
       setErrorMessage(null);
       setPendingExpiresAt(null);
       setScreenState('join_pending');
@@ -427,7 +451,7 @@ export function NexaShareApp() {
   const handleResetSession = () => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     pollTimerRef.current = null;
-    lastSignalTimeRef.current = 0;
+    signalInboxRef.current.clear();
     engineRef.current?.close();
     setToken(null);
     setRoomId(null);
@@ -633,10 +657,10 @@ export function NexaShareApp() {
             )}
 
             {/* Guest Join Request Prompt */}
-            {(screenState === 'expired' || screenState === 'peer_disconnected') && (
+            {(screenState === 'expired' || screenState === 'peer_disconnected' || screenState === 'ice_failed') && (
               <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 flex flex-col gap-3">
                 <p className="text-sm text-amber-200">
-                  {screenState === 'expired' ? 'Masa berlaku kode ruangan sudah habis.' : 'Sesi koneksi sudah tidak tersedia.'}
+                  {screenState === 'expired' ? 'Masa berlaku kode ruangan sudah habis.' : 'Koneksi belum tersedia. Coba lagi dengan kode baru.'}
                 </p>
                 <button type="button" onClick={handleCreateRoom} className="min-h-[44px] px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold self-start">
                   Buat Kode Baru
