@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>NexaShare browser transfer check</title>
+<style>body{font:16px system-ui;max-width:900px;margin:32px auto;padding:20px;background:#0f172a;color:#e2e8f0}button,input{padding:10px;margin:8px}pre{white-space:pre-wrap}h1{font-size:24px}</style></head>
+<body><h1>NexaShare: real browser transfer check</h1>
+<p>Development-only harness. Two real WebRTC peers run in this page. Production TURN credentials are fetched at runtime, never stored in the test file.</p>
+<button id="direct">Connect locally</button><button id="relay">Connect through production TURN</button>
+<button id="restart" disabled>Restart ICE</button><button id="send" disabled>Send synthetic 256 KiB file</button>
+<input id="file" type="file" disabled><button id="stop">Close peers</button>
+<pre id="status">Idle</pre><pre id="log"></pre>
+<script type="module">
+import { NexaShareTransferEngine } from '/src/lib/webrtc/transfer-engine.ts';
+const status = document.querySelector('#status');
+const log = document.querySelector('#log');
+const write = (message) => { log.textContent += `${message}\n`; };
+const base = 'https://nexa-shareio.vercel.app/api/v1';
+let host, guest, room, hostToken;
+const received = [];
+async function call(path, method = 'GET', token, body) {
+  const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.code ?? `HTTP ${response.status}`);
+  return data;
+}
+async function credentials() {
+  if (!hostToken) {
+    hostToken = (await call('/sessions', 'POST')).token;
+    room = await call('/rooms', 'POST', hostToken, { deviceLabel: 'Browser transfer test host' });
+    const guestToken = (await call('/sessions', 'POST')).token;
+    const pending = await call('/rooms/join', 'POST', guestToken, { code: room.code, deviceLabel: 'Browser transfer test guest' });
+    await call(`/rooms/${room.roomId}/requests/${pending.requestId}/approve`, 'POST', hostToken);
+  }
+  return (await call('/ice-servers', 'GET', hostToken)).iceServers;
+}
+async function close() {
+  host?.close(); guest?.close(); host = guest = null;
+  if (room && hostToken) await call(`/rooms/${room.roomId}/leave`, 'POST', hostToken).catch(() => {});
+  hostToken = room = null;
+  document.querySelector('#file').disabled = document.querySelector('#send').disabled = document.querySelector('#restart').disabled = true;
+}
+async function connect(relay) {
+  await close(); log.textContent = ''; received.length = 0;
+  status.textContent = 'Connecting';
+  const iceServers = relay ? await credentials() : [];
+  if (relay && !iceServers.some((server) => server.urls.some((url) => /^turns?:/.test(url)))) throw new Error('Production TURN missing');
+  const ready = new Set();
+  const state = (role, value, route) => {
+    write(`${role}: ${value} (${route})`);
+    if (value === 'connected') ready.add(role); else ready.delete(role);
+    const connected = ready.size === 2;
+    document.querySelector('#file').disabled = document.querySelector('#send').disabled = document.querySelector('#restart').disabled = !connected;
+    status.textContent = connected ? 'Connected: both peers and both channels ready' : `Connecting: ${role} ${value}`;
+  };
+  const common = { onProgress: (progress) => {
+    if (progress.state === 'COMPLETED') write(`${progress.fileName}: COMPLETED ${progress.processedBytes} bytes SHA256=${progress.sha256}`);
+  }, onSignalingError: (error) => write(`SIGNAL ERROR: ${error.message}`), onIncomingFileOffer: async () => ({ accept: true, writableStream: {
+    write: async (bytes) => { received.push(bytes.slice()); }, close: async () => write(`Receiver wrote ${received.reduce((sum, bytes) => sum + bytes.length, 0)} bytes`), abort: async () => write('Receiver aborted'),
+  } }) };
+  guest = new NexaShareTransferEngine({ ...common, onSignalOffer: async () => {}, onSignalAnswer: (answer) => host.handleRemoteAnswer(answer), onSignalIceCandidate: (candidate) => host.handleRemoteIceCandidate(candidate), onSignalRestart: () => host.restartConnection(), onConnectionStateChange: (value, route) => state('guest', value, route) });
+  host = new NexaShareTransferEngine({ ...common, onSignalOffer: (offer) => guest.handleRemoteOffer(offer), onSignalAnswer: async () => {}, onSignalIceCandidate: (candidate) => guest.handleRemoteIceCandidate(candidate), onRefreshIceServers: async () => iceServers, onConnectionStateChange: (value, route) => state('host', value, route) });
+  await guest.initialize(iceServers, false, relay ? 'relay' : 'all');
+  await host.initialize(iceServers, true, relay ? 'relay' : 'all');
+}
+const run = (task) => task().catch((error) => { status.textContent = `ERROR: ${error.message}`; write(error.stack); });
+document.querySelector('#direct').onclick = () => run(() => connect(false));
+document.querySelector('#relay').onclick = () => run(() => connect(true));
+document.querySelector('#restart').onclick = () => run(() => host.restartConnection());
+document.querySelector('#send').onclick = () => run(async () => {
+  const file = new File([new Uint8Array(256 * 1024).fill(77)], 'synthetic-256KiB.bin', { type: 'application/octet-stream' });
+  await host.sendFile(file); status.textContent = 'PASS: synthetic file sent and SHA-256 verified';
+});
+document.querySelector('#file').onchange = (event) => run(async () => {
+  const file = event.target.files?.[0]; if (!file) return;
+  await host.sendFile(file); status.textContent = 'PASS: selected file sent and SHA-256 verified';
+});
+document.querySelector('#stop').onclick = () => run(async () => { await close(); status.textContent = 'Closed'; });
+</script></body></html>

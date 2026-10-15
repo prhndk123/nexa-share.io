@@ -73,3 +73,7 @@ Aplikasi tidak membutuhkan database PostgreSQL apapun.
 npm test
 ```
 *Menjalankan pengujian Vitest untuk codec protokol chunking biner 16 KiB dan skema sinyal WebRTC, serta smoke test API terhadap bundle produksi yang disalin ke direktori sementara tanpa source atau node_modules. Smoke test memeriksa health check, pembuatan sesi, autentikasi, dan pembuatan ruangan.*
+
+Pengujian WebRTC mencakup urutan signaling, kesiapan dua kanal data, ICE restart dengan batas dua percobaan, penutupan sesi saat menunggu penerimaan berkas, serta pesan selesai yang tiba sebelum data. Aplikasi tetap melakukan polling signaling setelah tersambung agar koneksi dapat dipulihkan tanpa membuat ruangan baru.
+
+Untuk pengujian browser nyata, jalankan `npm run dev` dan buka `http://localhost:5173/test/webrtc.html`. Halaman khusus development ini membuat dua peer dalam satu halaman. Pilih **Connect locally** atau **Connect through production TURN**, uji **Restart ICE**, lalu kirim berkas sintetis dengan tombol yang tersedia atau pemilih berkas. Gunakan **Close peers** setelah selesai; opsi TURN mengambil konfigurasi dari API produksi hanya saat pengujian berjalan. Halaman ini tidak masuk ke build frontend produksi.

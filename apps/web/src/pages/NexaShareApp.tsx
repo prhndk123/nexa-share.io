@@ -82,6 +82,7 @@ export function NexaShareApp() {
   const [peerDeviceLabel, setPeerDeviceLabel] = useState<string | null>(null);
   const [transfers, setTransfers] = useState<TransferProgressSnapshot[]>([]);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Incoming File Prompt
@@ -93,6 +94,7 @@ export function NexaShareApp() {
   } | null>(null);
 
   const engineRef = useRef<NexaShareTransferEngine | null>(null);
+  const hasConnectedRef = useRef(false);
   const pollTimerRef = useRef<number | null>(null);
   const signalInboxRef = useRef(new SignalInbox());
   const serverClockOffsetRef = useRef<number>(0);
@@ -113,6 +115,20 @@ export function NexaShareApp() {
       setInputCode(formatted);
       setMode('receive');
     }
+  }, []);
+
+  // Native file pickers / mobile file providers can suspend the page. Resume
+  // recovery on return without replacing the room or closing the channels.
+  useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState === 'visible') engineRef.current?.resumeConnection();
+    };
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
   }, []);
 
   // Calculate from the server deadline; browser timer throttling must not extend it.
@@ -190,16 +206,21 @@ export function NexaShareApp() {
           setScreenState('ice_failed');
           setErrorMessage(`Pertukaran informasi koneksi gagal: ${error.message}`);
         },
+        onSignalRestart: async () => {
+          await api.sendSignal(curToken, curRoomId, 'webrtc:restart', 'HOST', {});
+        },
+        onRefreshIceServers: async () => (await api.getIceServers(curToken)).iceServers,
         onConnectionStateChange: (state, route) => {
           setRouteType(route);
           if (state === 'connected') {
+            hasConnectedRef.current = true;
+            setIsReconnecting(false);
+            setErrorMessage(null);
             setScreenState('ready');
-            // The engine reports connected only after both data channels open.
-            if (pollTimerRef.current) {
-              clearInterval(pollTimerRef.current);
-              pollTimerRef.current = null;
-            }
+          } else if (state === 'connecting') {
+            if (hasConnectedRef.current) setIsReconnecting(true);
           } else if (state === 'failed') {
+            setIsReconnecting(false);
             setScreenState('ice_failed');
             setErrorMessage(relayConfigured
               ? 'Koneksi langsung dan relay gagal. Coba jaringan lain atau periksa layanan relay.'
@@ -247,9 +268,12 @@ export function NexaShareApp() {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     signalInboxRef.current.clear();
     let polling = false;
+    let lastPollAt = 0;
 
     const timer = window.setInterval(async () => {
       if (polling) return;
+      if (engineRef.current?.isReady && Date.now() - lastPollAt < 2000) return;
+      lastPollAt = Date.now();
       polling = true;
       try {
         const { signals, serverTime } = await api.pollSignals(curToken, curRoomId, 0);
@@ -334,6 +358,11 @@ export function NexaShareApp() {
         }
         break;
 
+      case 'webrtc:restart':
+        if (!engineRef.current) return false;
+        if (myRole === 'HOST') await engineRef.current.restartConnection();
+        break;
+
       case 'room:closed':
         setScreenState('peer_disconnected');
         setErrorMessage('Sesi transfer telah ditutup oleh lawan transfer.');
@@ -345,6 +374,8 @@ export function NexaShareApp() {
   // Host: Create Room Flow
   const handleCreateRoom = async () => {
     try {
+      hasConnectedRef.current = false;
+      setIsReconnecting(false);
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
       engineRef.current?.close();
@@ -403,6 +434,8 @@ export function NexaShareApp() {
   const handleJoinRoom = async () => {
     if (!inputCode.trim()) return;
     try {
+      hasConnectedRef.current = false;
+      setIsReconnecting(false);
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
       engineRef.current?.close();
@@ -428,12 +461,16 @@ export function NexaShareApp() {
   // Send File Handler
   const handleSendFiles = async (files: FileList | null) => {
     if (!files || files.length === 0 || !engineRef.current) return;
+    const engine = engineRef.current;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        await engineRef.current.sendFile(file);
+        await engine.sendFile(file);
       } catch (err: any) {
+        if (engineRef.current !== engine) return;
         console.error('Gagal mengirim berkas:', err);
+        setErrorMessage(err.message || 'Gagal mengirim berkas. Silakan coba lagi.');
+        break;
       }
     }
   };
@@ -453,12 +490,15 @@ export function NexaShareApp() {
     pollTimerRef.current = null;
     signalInboxRef.current.clear();
     engineRef.current?.close();
+    engineRef.current = null;
+    hasConnectedRef.current = false;
     setToken(null);
     setRoomId(null);
     setRoomCode('');
     setRoomExpiresAt(null);
     setPendingExpiresAt(null);
     setExpiryCountdown(0);
+    setIsReconnecting(false);
     setTransfers([]);
     setPendingGuestRequest(null);
     setIncomingOffer(null);
@@ -517,6 +557,11 @@ export function NexaShareApp() {
         </section>
 
         {/* Error Banner */}
+        {isReconnecting && (
+          <div role="status" className="rounded-xl border border-sky-500/30 bg-sky-950/30 p-4 text-sm text-sky-200">
+            Koneksi terganggu. Sedang menyambungkan kembali; tunggu sebelum mengirim berkas.
+          </div>
+        )}
         {errorMessage && (
           <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-4 text-sm text-rose-200 flex items-center justify-between gap-3 animate-in fade-in">
             <div className="flex items-center gap-2.5">
@@ -618,7 +663,7 @@ export function NexaShareApp() {
                         : 'bg-sky-400'
                     }`}
                   />
-                  <span>Status: {screenState}</span>
+                  <span>Status: {isReconnecting ? 'reconnecting' : screenState}</span>
                 </span>
                 {routeType !== 'UNKNOWN' && (
                   <span className="px-2.5 py-1 rounded-full text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-500/30">
@@ -736,6 +781,7 @@ export function NexaShareApp() {
                   <input
                     ref={fileInputRef}
                     type="file"
+                    onClick={(event) => event.stopPropagation()}
                     multiple
                     onChange={(e) => handleSendFiles(e.target.files)}
                     className="sr-only"
@@ -837,6 +883,7 @@ export function NexaShareApp() {
                   <input
                     ref={fileInputRef}
                     type="file"
+                    onClick={(event) => event.stopPropagation()}
                     multiple
                     onChange={(e) => handleSendFiles(e.target.files)}
                     className="sr-only"
