@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nexashare-pwa-v1';
+const CACHE_NAME = 'nexashare-pwa-v2';
 
 const STATIC_ASSETS = [
   '/',
@@ -11,7 +11,7 @@ const STATIC_ASSETS = [
   '/icons/apple-touch-icon.png',
 ];
 
-// Install Event: pre-cache static assets
+// Install Event: pre-cache static assets and skip waiting
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
@@ -22,7 +22,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate Event: clean up outdated caches
+// Activate Event: clean up outdated caches immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
@@ -40,7 +40,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event: Stale-while-revalidate for static assets, network-only for /api
+// Fetch Event: Network-first for navigation, stale-while-revalidate for static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -50,6 +50,22 @@ self.addEventListener('fetch', (event) => {
     url.pathname.startsWith('/v1') ||
     event.request.method !== 'GET'
   ) {
+    return;
+  }
+
+  // Network-First for HTML navigation so latest build updates load immediately
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match('/index.html'))
+    );
     return;
   }
 
@@ -69,13 +85,7 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => {
-          // If offline and request is navigation, return cached /index.html
-          if (event.request.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-          return cachedResponse;
-        });
+        .catch(() => cachedResponse);
 
       return cachedResponse || fetchPromise;
     })

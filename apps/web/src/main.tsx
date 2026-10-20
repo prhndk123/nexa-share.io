@@ -18,7 +18,10 @@ if ('serviceWorker' in navigator && !import.meta.env.DEV) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js')
-      .then((reg) => console.log('NexaShare PWA ServiceWorker registered:', reg.scope))
+      .then((reg) => {
+        console.log('NexaShare PWA ServiceWorker registered:', reg.scope);
+        reg.update();
+      })
       .catch((err) => console.warn('NexaShare PWA ServiceWorker failed:', err));
   });
 }
