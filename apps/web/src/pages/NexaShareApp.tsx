@@ -14,6 +14,9 @@ import {
   Lock,
   ArrowRight,
   Camera,
+  MessageSquare,
+  FileText,
+  Clipboard,
 } from 'lucide-react';
 import type { ScreenState, SignalMessage } from '@nexashare/shared';
 import { api, ApiError } from '../lib/api/client';
@@ -25,6 +28,7 @@ import {
 } from '../lib/webrtc/transfer-engine';
 import { QRCodeDisplay } from '../components/QRCodeDisplay';
 import { QRScannerModal } from '../components/QRScannerModal';
+import { TextShareWorkspace, type SharedClip } from '../components/TextShareWorkspace';
 
 function detectDeviceLabel(): string {
   const ua = navigator.userAgent;
@@ -92,6 +96,13 @@ export function NexaShareApp() {
     size: number;
     resolver: (decision: { accept: boolean; writableStream?: any }) => void;
   } | null>(null);
+
+  // Text Sharing State
+  const [activeTab, setActiveTab] = useState<'files' | 'text'>('files');
+  const [sharedClips, setSharedClips] = useState<SharedClip[]>([]);
+  const [unreadTextCount, setUnreadTextCount] = useState<number>(0);
+  const [textToast, setTextToast] = useState<SharedClip | null>(null);
+  const [copiedToastClipId, setCopiedToastClipId] = useState<string | null>(null);
 
   const engineRef = useRef<NexaShareTransferEngine | null>(null);
   const hasConnectedRef = useRef(false);
@@ -238,6 +249,18 @@ export function NexaShareApp() {
               resolver: resolve,
             });
           });
+        },
+        onIncomingText: (message) => {
+          const newClip: SharedClip = {
+            id: message.transferId,
+            text: message.text,
+            sender: 'peer',
+            senderLabel: message.senderLabel || peerDeviceLabel || 'Perangkat Lawan',
+            timestamp: message.timestamp || Date.now(),
+          };
+          setSharedClips((prev) => [newClip, ...prev]);
+          setTextToast(newClip);
+          setUnreadTextCount((count) => count + 1);
         },
         onProgress: (snapshot) => {
           setTransfers((prev) => {
@@ -512,11 +535,41 @@ export function NexaShareApp() {
     setExpiryCountdown(0);
     setIsReconnecting(false);
     setTransfers([]);
+    setSharedClips([]);
+    setUnreadTextCount(0);
+    setTextToast(null);
+    setActiveTab('files');
     setPendingGuestRequest(null);
     setIncomingOffer(null);
     setScreenState('idle');
     setMode('home');
     setErrorMessage(null);
+  };
+
+  // Send Text Handler
+  const handleSendText = (text: string) => {
+    if (!text.trim() || !engineRef.current) return;
+    try {
+      const msg = engineRef.current.sendText(text, deviceLabel);
+      const myClip: SharedClip = {
+        id: msg.transferId,
+        text: msg.text,
+        sender: 'self',
+        senderLabel: deviceLabel,
+        timestamp: msg.timestamp,
+      };
+      setSharedClips((prev) => [myClip, ...prev]);
+    } catch (err: any) {
+      console.error('Gagal mengirim teks:', err);
+      setErrorMessage(err.message || 'Gagal mengirim teks.');
+    }
+  };
+
+  const handleSwitchTab = (tab: 'files' | 'text') => {
+    setActiveTab(tab);
+    if (tab === 'text') {
+      setUnreadTextCount(0);
+    }
   };
 
   const statusLabels: Record<string, string> = {
@@ -720,47 +773,89 @@ export function NexaShareApp() {
               </div>
             )}
 
-            {/* File Drag and Drop Zone (Active when Ready) */}
+            {/* File & Text Share Workspace (Active when Ready) */}
             {screenState === 'ready' && (
               <div className="flex flex-col gap-4">
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragOver(true);
-                  }}
-                  onDragLeave={() => setIsDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragOver(false);
-                    handleSendFiles(e.dataTransfer.files);
-                  }}
-                  role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition flex flex-col items-center justify-center gap-3 min-h-[180px] ${
-                    isDragOver
-                      ? 'border-emerald-400 bg-emerald-950/20 scale-[0.99]'
-                      : 'border-slate-700 hover:border-emerald-400 bg-slate-950/40 hover:bg-slate-950/70'
-                  }`}
-                >
-                  <div className="p-3.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-md">
-                    <Send className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-white">
-                      Pilih berkas atau seret ke sini
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Kamu bisa memilih beberapa foto, video, atau dokumen sekaligus.
-                    </p>
-                  </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    onClick={(event) => event.stopPropagation()}
-                    multiple
-                    onChange={(e) => handleSendFiles(e.target.files)}
-                    className="sr-only"
-                  />
+                {/* Tabs Switcher: Berkas vs Teks */}
+                <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchTab('files')}
+                    className={`flex-1 min-h-[40px] flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition ${
+                      activeTab === 'files'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Transfer Berkas</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchTab('text')}
+                    className={`flex-1 min-h-[40px] flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition relative ${
+                      activeTab === 'text'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Teks & Clipboard</span>
+                    {unreadTextCount > 0 && activeTab !== 'text' && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-400 text-slate-950 animate-pulse">
+                        {unreadTextCount}
+                      </span>
+                    )}
+                  </button>
                 </div>
+
+                {activeTab === 'files' ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragOver(true);
+                    }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragOver(false);
+                      handleSendFiles(e.dataTransfer.files);
+                    }}
+                    role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition flex flex-col items-center justify-center gap-3 min-h-[180px] ${
+                      isDragOver
+                        ? 'border-emerald-400 bg-emerald-950/20 scale-[0.99]'
+                        : 'border-slate-700 hover:border-emerald-400 bg-slate-950/40 hover:bg-slate-950/70'
+                    }`}
+                  >
+                    <div className="p-3.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-md">
+                      <Send className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">
+                        Pilih berkas atau seret ke sini
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Kamu bisa memilih beberapa foto, video, atau dokumen sekaligus.
+                      </p>
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onClick={(event) => event.stopPropagation()}
+                      multiple
+                      onChange={(e) => handleSendFiles(e.target.files)}
+                      className="sr-only"
+                    />
+                  </div>
+                ) : (
+                  <TextShareWorkspace
+                    sharedClips={sharedClips}
+                    onSendText={handleSendText}
+                    onClearClips={() => setSharedClips([])}
+                    peerDeviceLabel={peerDeviceLabel}
+                  />
+                )}
               </div>
             )}
           </section>
@@ -856,22 +951,64 @@ export function NexaShareApp() {
                   </span>
                 </div>
 
-                {/* Receiver can also send files bidirectionally */}
-                <div
-                  role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
-                  className="border border-dashed border-slate-700 hover:border-emerald-400 rounded-xl p-5 text-center cursor-pointer bg-slate-950/30 flex items-center justify-center gap-2 text-xs text-slate-300"
-                >
-                  <Send className="w-4 h-4 text-emerald-400" />
-                  <span>Kirim berkas balik ke host? Klik di sini</span>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    onClick={(event) => event.stopPropagation()}
-                    multiple
-                    onChange={(e) => handleSendFiles(e.target.files)}
-                    className="sr-only"
-                  />
+                {/* Tabs Switcher: Berkas vs Teks */}
+                <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchTab('files')}
+                    className={`flex-1 min-h-[40px] flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition ${
+                      activeTab === 'files'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Transfer Berkas</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchTab('text')}
+                    className={`flex-1 min-h-[40px] flex items-center justify-center gap-2 rounded-lg text-xs font-semibold transition relative ${
+                      activeTab === 'text'
+                        ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Teks & Clipboard</span>
+                    {unreadTextCount > 0 && activeTab !== 'text' && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-400 text-slate-950 animate-pulse">
+                        {unreadTextCount}
+                      </span>
+                    )}
+                  </button>
                 </div>
+
+                {activeTab === 'files' ? (
+                  /* Receiver can also send files bidirectionally */
+                  <div
+                    role="button" tabIndex={0} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInputRef.current?.click(); } }} onClick={() => fileInputRef.current?.click()}
+                    className="border border-dashed border-slate-700 hover:border-emerald-400 rounded-xl p-5 text-center cursor-pointer bg-slate-950/30 flex items-center justify-center gap-2 text-xs text-slate-300"
+                  >
+                    <Send className="w-4 h-4 text-emerald-400" />
+                    <span>Kirim berkas balik ke host? Klik di sini</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onClick={(event) => event.stopPropagation()}
+                      multiple
+                      onChange={(e) => handleSendFiles(e.target.files)}
+                      className="sr-only"
+                    />
+                  </div>
+                ) : (
+                  <TextShareWorkspace
+                    sharedClips={sharedClips}
+                    onSendText={handleSendText}
+                    onClearClips={() => setSharedClips([])}
+                    peerDeviceLabel={peerDeviceLabel}
+                  />
+                )}
               </div>
             )}
           </section>
@@ -1072,6 +1209,68 @@ export function NexaShareApp() {
           </span>
         </div>
       </footer>
+
+      {/* Floating Toast for Incoming Text */}
+      {textToast && (
+        <aside aria-label="Notifikasi teks baru" className="fixed bottom-6 right-6 z-50 max-w-sm w-full p-2">
+          <div className="p-4 rounded-2xl bg-slate-900 border border-emerald-500/40 shadow-2xl flex flex-col gap-2.5 backdrop-blur-md">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Teks baru dari {textToast.senderLabel || 'Perangkat Lawan'}</span>
+              </span>
+              <button
+                type="button"
+                aria-label="Tutup notifikasi"
+                onClick={() => setTextToast(null)}
+                className="text-slate-400 hover:text-white p-1 rounded transition"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 line-clamp-2 font-mono bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 break-words">
+              {textToast.text}
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(textToast.text).then(() => {
+                    setCopiedToastClipId(textToast.id);
+                    setTimeout(() => {
+                      setCopiedToastClipId(null);
+                      setTextToast(null);
+                    }, 1500);
+                  });
+                }}
+                className="flex-1 min-h-[38px] px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition shadow"
+              >
+                {copiedToastClipId === textToast.id ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-slate-950" />
+                    <span>Salin Cepat</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleSwitchTab('text');
+                  setTextToast(null);
+                }}
+                className="px-3 min-h-[38px] rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
+              >
+                Buka Tab
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
 
       {/* In-App QR Camera Scanner Modal */}
       <QRScannerModal

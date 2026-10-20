@@ -40,5 +40,22 @@ describe('NexaShare Shared Protocol & Binary Frame Codec', () => {
     expect(valid.type).toBe('webrtc:offer');
     expect(valid.recipientRole).toBe('GUEST');
   });
+
+  it('validates text:share control message correctly', async () => {
+    const { TransferControlMessageSchema } = await import('../index');
+
+    const valid = TransferControlMessageSchema.parse({
+      type: 'text:share',
+      transferId: '6f6af0c4-41d0-4e83-9714-ce565322ab62',
+      text: 'Halo dari NexaShare!',
+      senderLabel: 'MacBook Pro',
+      timestamp: 1729400000000,
+    });
+    expect(valid.type).toBe('text:share');
+    if (valid.type === 'text:share') {
+      expect(valid.text).toBe('Halo dari NexaShare!');
+      expect(valid.senderLabel).toBe('MacBook Pro');
+    }
+  });
 });
 

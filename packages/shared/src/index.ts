@@ -179,9 +179,17 @@ export const TransferControlMessageSchema = z.discriminatedUnion('type', [
     transferId: z.string().uuid(),
     code: z.string().max(64),
   }),
+  z.object({
+    type: z.literal('text:share'),
+    transferId: z.string().uuid(),
+    text: z.string().min(1).max(500000),
+    senderLabel: z.string().max(64).optional(),
+    timestamp: z.number().int(),
+  }),
 ]);
 
 export type TransferControlMessage = z.infer<typeof TransferControlMessageSchema>;
+export type TextShareMessage = Extract<TransferControlMessage, { type: 'text:share' }>;
 
 function uuidToBytes(uuid: string): Uint8Array {
   const hex = uuid.replace(/-/g, '');

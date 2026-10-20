@@ -80,6 +80,9 @@ export class NexaShareTransferEngine {
         accept: boolean;
         writableStream?: any;
       }>;
+      onIncomingText?: (
+        message: Extract<TransferControlMessage, { type: 'text:share' }>
+      ) => void;
       onProgress: (snapshot: TransferProgressSnapshot) => void;
     }
   ) {}
@@ -392,6 +395,10 @@ export class NexaShareTransferEngine {
           this.pendingVerifyResolvers.delete(msg.transferId);
           break;
         }
+
+        case 'text:share':
+          this.callbacks.onIncomingText?.(msg);
+          break;
       }
     };
   }
@@ -558,6 +565,25 @@ export class NexaShareTransferEngine {
       state: 'COMPLETED',
       sha256: digestHex,
     });
+  }
+
+  sendText(text: string, senderLabel?: string): Extract<TransferControlMessage, { type: 'text:share' }> {
+    if (!this.controlChannel || this.controlChannel.readyState !== 'open') {
+      throw new Error('Kanal transfer belum siap untuk mengirim teks.');
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new Error('Teks tidak boleh kosong.');
+    }
+    const message: Extract<TransferControlMessage, { type: 'text:share' }> = {
+      type: 'text:share',
+      transferId: crypto.randomUUID(),
+      text,
+      senderLabel,
+      timestamp: Date.now(),
+    };
+    this.sendControl(message);
+    return message;
   }
 
   private async finalizeIncomingTransfer(

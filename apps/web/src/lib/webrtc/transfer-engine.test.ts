@@ -271,4 +271,54 @@ describe('WebRTC signaling and channel readiness', () => {
     await expect(engine.sendFile({ name: 'test.txt', size: 0, type: 'text/plain' } as File, '6f6af0c4-41d0-4e83-9714-ce565322ab62')).rejects.toThrow('HASH_MISMATCH');
     engine.close();
   });
+
+  it('sends text:share message over the control channel when ready', async () => {
+    const engine = new NexaShareTransferEngine(callbacks());
+    await engine.initialize([], true);
+    const peer = FakePeer.instances[0];
+    peer.connectionState = 'connected';
+    peer.channels.forEach((channel) => channel.open());
+    const control = peer.channels[0];
+
+    const sent = engine.sendText('https://github.com/prhndk123', 'My Laptop');
+    expect(sent.type).toBe('text:share');
+    expect(sent.text).toBe('https://github.com/prhndk123');
+    expect(sent.senderLabel).toBe('My Laptop');
+    expect(control.send).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"text:share"')
+    );
+    expect(control.send).toHaveBeenCalledWith(
+      expect.stringContaining('"text":"https://github.com/prhndk123"')
+    );
+    engine.close();
+  });
+
+  it('dispatches incoming text:share message to onIncomingText callback', async () => {
+    const onIncomingText = vi.fn();
+    const cb = { ...callbacks(), onIncomingText };
+    const engine = new NexaShareTransferEngine(cb);
+    await engine.initialize([], false);
+    const peer = FakePeer.instances[0];
+    const control = new FakeChannel('nexashare-control');
+    peer.ondatachannel?.({ channel: control });
+    control.open();
+
+    const incomingPayload = {
+      type: 'text:share',
+      transferId: '6f6af0c4-41d0-4e83-9714-ce565322ab62',
+      text: 'Pesan rahasia atau link penting',
+      senderLabel: 'Smartphone Android',
+      timestamp: Date.now(),
+    };
+    await control.onmessage?.({ data: JSON.stringify(incomingPayload) });
+
+    expect(onIncomingText).toHaveBeenCalledTimes(1);
+    expect(onIncomingText).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'text:share',
+      text: 'Pesan rahasia atau link penting',
+      senderLabel: 'Smartphone Android',
+    }));
+    engine.close();
+  });
 });
+
